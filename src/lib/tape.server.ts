@@ -27,7 +27,11 @@ async function fetchJson(url: string, timeoutMs = 4500): Promise<unknown> {
   }
 }
 
-async function binanceTape(): Promise<{ btcUsd: number; change24h: number; source: string } | null> {
+async function binanceTape(): Promise<{
+  btcUsd: number;
+  change24h: number;
+  source: string;
+} | null> {
   try {
     const raw = (await fetchJson("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT")) as {
       lastPrice?: string;
@@ -116,7 +120,25 @@ async function fearGreed(): Promise<{ value: number; label: string } | null> {
   }
 }
 
+const TAPE_TTL_MS = 15_000;
+let cached: { at: number; tape: Tape } | null = null;
+let inflight: Promise<Tape> | null = null;
+
+/** Cached and de-duplicated so every visitor's dawn does not fan out to six upstream APIs. */
 export async function loadTape(): Promise<Tape> {
+  if (cached && Date.now() - cached.at < TAPE_TTL_MS) return cached.tape;
+  inflight ??= fetchTapeUncached()
+    .then((tape) => {
+      cached = { at: Date.now(), tape };
+      return tape;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  return inflight;
+}
+
+async function fetchTapeUncached(): Promise<Tape> {
   const [coinbase, cbChange, cbGbp, gecko, binance, fng] = await Promise.all([
     coinbaseSpot(),
     coinbaseChange(),

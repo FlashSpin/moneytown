@@ -65,6 +65,11 @@ export type Subject = PurseFields & {
   hangT: number;
   brainChoice: BrainChoice;
   brainModel: string;
+  /** Lifetime sats seen arriving in this villager's watched wallet. */
+  earnedSats?: number;
+  /** Consecutive dawns with no new money in the watched wallet. */
+  dryDays?: number;
+  bornDay?: number;
 };
 
 export type King = PurseFields & {

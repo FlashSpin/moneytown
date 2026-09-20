@@ -1,4 +1,25 @@
+import { getRequest } from "@tanstack/react-start/server";
 import type { CounselPrefer } from "./counsel";
+import { takeToken } from "./rate-limit";
+
+const LIMIT_PER_MIN = 20;
+
+function clientKey(): string {
+  const h = getRequest()?.headers;
+  const fwd = h?.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return fwd || h?.get("x-real-ip") || "unknown";
+}
+
+/** Public entry point: rate limited per client so strangers cannot spend the XAI key. */
+export async function askGrokCounselLimited(
+  prompt: string,
+  prefer: CounselPrefer = "any",
+): Promise<Awaited<ReturnType<typeof askGrokCounsel>>> {
+  if (!takeToken(`counsel:${clientKey()}`, LIMIT_PER_MIN, 60_000)) {
+    return { ok: false, error: "Too many requests. Try again shortly." };
+  }
+  return askGrokCounsel(prompt, prefer);
+}
 
 export async function askGrokCounsel(
   prompt: string,

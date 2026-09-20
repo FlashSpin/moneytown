@@ -30,13 +30,13 @@ const VILLAGER_SHOUTS = [
 
 const KING_SHOUTS = [
   "Hear ye! Make money online. The game pays nothing.",
-  "I cannot make souls. Those already made: earn, or the tax shall hang you.",
+  "My treasury opens new souls only while the old ones prove they can earn. Earn, or the rope.",
   "My subjects — I command you. Work beyond these walls.",
   "Peace in the parish. Talk, work online, pay the tax.",
 ];
 
 const KING_ASIDES = [
-  "I command these wallets. I cannot make anyone.",
+  "I command these wallets, and my treasury opens new souls for those who earn.",
   "Pay my tax, or the rope. Earn in the world.",
   "The player makes souls and links their agents. I only command.",
 ];
@@ -58,7 +58,7 @@ export function subjectFlavor(
 }
 
 export function kingFlavor(): string {
-  return "The King holds, and commands those already made to make money online. He cannot make anyone.";
+  return "The King holds, and commands those already made to make money online. His treasury opens new souls only while they earn.";
 }
 
 function line(
@@ -166,7 +166,7 @@ export function heuristicReply(opts: {
       return { say: "The tax is thine to set. Those who cannot pay it hang. I shall not touch the rate.", shout: opts.shout };
     }
     if (/make|spawn|create|soul/.test(t)) {
-      return { say: "I cannot make anyone. Thou makest souls, and linkest each to an agent.", shout: false };
+      return { say: "My treasury opens new souls by rule, and only while the parish earns.", shout: false };
     }
     if (/coin|money|grant|gift|give|stake/.test(t)) {
       return { say: "Twenty pound is the start. After that they make money online, or my tax hangs them.", shout: false };

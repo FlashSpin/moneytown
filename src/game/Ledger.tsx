@@ -226,7 +226,7 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
       />
       <p className="hint">
         {target.king
-          ? "Commands the parish. Cannot make anyone."
+          ? "Commands the parish. His treasury opens new souls by rule."
           : "This agent must think and make money online for the wallet, or the King's tax hangs them."}
       </p>
       <button type="button" className="text-btn" onClick={() => void scanWits()}>
@@ -244,6 +244,10 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
         autoComplete="off"
         onChange={(e) => setAddr(e.target.value)}
       />
+      <p className="hint">
+        Placeholder addresses have no key behind them. Never send real bitcoin to one. Paste an
+        address you control to watch it.
+      </p>
 
       <label className="field-label" htmlFor={`wallet-gbp-${target.id}`}>
         Test purse (£){testing ? "" : " — locked off-test"}
@@ -388,7 +392,7 @@ export function Ledger() {
           </button>
         </div>
         <p className="hint">
-          Those who cannot pay hang. The King cannot change this. <Key>[</Key> <Key>]</Key>
+          Those who cannot pay hang. The tithe is yours to set. <Key>[</Key> <Key>]</Key>
         </p>
       </section>
 
@@ -403,7 +407,7 @@ export function Ledger() {
           onChange={(choice, model) => setBrain(choice, model)}
         />
         <p className="hint">
-          You make them. The King cannot. Linked: {spawnLabel}. Costs £{STAKE_GBP} from the King.
+          The King opens them on his own while the parish earns; you may also open one. Linked: {spawnLabel}. Costs £{STAKE_GBP} from the King.
           They must make money online or the tax hangs them.
         </p>
         <button

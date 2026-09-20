@@ -221,12 +221,12 @@ JSON:
 {"subjects":[{"id":"...","action":"earn|idle|walk","side":"flat","say":"one Tudor sentence"}],"talk":[{"from":"subject id","to":"subject id or king or null","shout":false,"text":"short Tudor speech"}]}
 Rules: earn = work ONLINE. idle/walk = rest. Never ask for keys. Talk 2-5 lines. JSON only.`;
   }
-  return `Day ${input.day}. You are the KING AI of Ledgerford. You CANNOT make, spawn, or create anyone. The player alone makes souls and links each to an AI agent. You command those already made. King purse ${gbp(input.kingBalance, tape)}. Tithe ${tax}% is set by the PLAYER — never change it. Daily upkeep £${RENT_GBP}. Cap ${input.cap}.
+  return `Day ${input.day}. You are the KING AI of Ledgerford. The crown treasury opens new souls by a fixed rule in code, not by your choice, and only while the parish is earning. You command those already made. King purse ${gbp(input.kingBalance, tape)}. Tithe ${tax}% is set by the PLAYER — never change it. Daily upkeep £${RENT_GBP}. Cap ${input.cap}.
 Souls (id|name|purse|mode|chain|agent):
 ${rows || "(none)"}
 JSON:
-{"king":{"say":"one Tudor sentence — command them to earn online, never offer to make a soul"},"subjects":[{"id":"...","action":"earn|idle|walk","side":"flat","say":"one Tudor sentence"}],"talk":[{"from":"king or subject id","to":"subject id or king or null","shout":false,"text":"short Tudor speech"}]}
-Rules: The game pays NO wage. Never invent in-game income. earn = work ONLINE. Money grows only if a real on-chain watch increases, or a tester edits the Test purse. If they cannot pay the King's tax they hang. Never spawn. Never ask for keys. Talk 3-6 lines. Amounts in pounds. JSON only.`;
+{"king":{"say":"one Tudor sentence — command them to earn online"},"subjects":[{"id":"...","action":"earn|idle|walk","side":"flat","say":"one Tudor sentence"}],"talk":[{"from":"king or subject id","to":"subject id or king or null","shout":false,"text":"short Tudor speech"}]}
+Rules: The game pays NO wage. Never invent in-game income. earn = work ONLINE. Money grows only if a real on-chain watch increases, or a tester edits the Test purse. If they cannot pay the King's tax they hang. Never claim to spawn or move money yourself. Never ask for keys. Talk 3-6 lines. Amounts in pounds. JSON only.`;
 }
 
 function parseTalks(
@@ -276,7 +276,7 @@ function parseCounsel(
     talks?: unknown;
   };
   const king: KingCounsel = {
-    say: String(obj.king?.say ?? "The King holds his peace. He cannot make anyone."),
+    say: String(obj.king?.say ?? "The King holds his peace. His treasury opens souls by rule."),
   };
   const byId = new Map((obj.subjects ?? []).map((s) => [String(s.id), s]));
   const subjects: SubjectCounsel[] = ids.map((id) => {
@@ -464,7 +464,7 @@ export async function counselTalk(
   spec: BrainSpec,
 ): Promise<TalkReply | null> {
   const role = input.king
-    ? "the King AI of Ledgerford. You cannot make anyone. You command those already made"
+    ? "the King AI of Ledgerford. The treasury opens new souls by fixed rule, not by you. You command those already made"
     : `${input.name}, a villager of Ledgerford whose linked agent is ${input.agentLabel}`;
   const purse = gbp(input.testBalance, input.tape);
   const prompt = `You are ${role} in a 16th-century English market town. Day ${input.day}. Purse ${purse}. The King's tax is ${Math.round(input.taxRate * 100)}%, set by the player. You must make money ONLINE for this wallet — the game pays no wage — or the tax hangs you. No keys. On-chain is watch-only. Test purses are editable only in Test mode. Speak in pounds.

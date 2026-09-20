@@ -239,8 +239,8 @@ export function Game() {
               <h1>Ledgerford</h1>
               <p className="gate-copy">
                 You make each soul and link it to an AI agent that must think and make money
-                online for its own wallet. The King cannot make anyone — he only commands, and
-                his tax hangs those who cannot pay. The game pays no wage. In Test mode you may
+                online for its own wallet. The King commands the parish and his treasury opens new souls while
+                the old ones earn. A soul whose wallet stops growing hangs. The game pays no wage. In Test mode you may
                 edit any wallet in pounds. On-chain is watch-only. No keys are kept.
               </p>
               <button

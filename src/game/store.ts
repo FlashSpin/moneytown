@@ -31,6 +31,15 @@ import {
   WOMEN_NAMES,
 } from "./constants";
 import { runSubjectDawn } from "./dawn";
+import {
+  DRY_DAYS_LIMIT,
+  defaultKingPolicy,
+  isStarved,
+  kingSpawnCount,
+  nextDryDays,
+  pickParent,
+  walletIncome,
+} from "./economy";
 import { choiceLabel, counselDawn, counselTalk, scanCatalog } from "./llm";
 import { facing, GALLOWS_DROP, GALLOWS_WATCH, moveToward, wanderPoint } from "./town";
 import type {
@@ -89,7 +98,7 @@ function makeKing(rng: () => number): King {
     frame: 0,
     frameT: 0,
     lastAction: "hold",
-    lastFlavor: "The King waits upon the parish. He cannot make anyone.",
+    lastFlavor: "The King waits upon the parish. His treasury opens new souls while the parish earns.",
     brainChoice: "auto",
     brainModel: "",
   });
@@ -101,6 +110,7 @@ function makeSubject(
   taken: Set<string>,
   grant: number,
   agent: { choice: BrainChoice; model: string },
+  bornDay = 0,
 ): Subject {
   const female = rng() > 0.5;
   const pool = female ? WOMEN_NAMES : MEN_NAMES;
@@ -131,6 +141,9 @@ function makeSubject(
     hangT: 0,
     brainChoice: agent.choice,
     brainModel: agent.model,
+    earnedSats: 0,
+    dryDays: 0,
+    bornDay,
   });
 }
 
@@ -222,7 +235,7 @@ function fresh(seed = Date.now() % 1_000_000): GameState {
       {
         id: "l-open",
         day: 0,
-        text: "Fund the King. You make each soul and link it to an AI agent. The King cannot make anyone. They must make money online for their wallet, or the King's tax hangs them.",
+        text: "Fund the King. His treasury opens each new soul and links it to an agent. A soul must keep making money for its own wallet, or it hangs.",
         kind: "system",
       },
     ],
@@ -315,6 +328,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
   },
 
   give: () => {
+    if (get().dawnRunning) return;
     const s = get();
     const amount = transferSats(s.tape);
     const king = syncPurse({ ...s.king, testBalance: s.king.testBalance + amount });
@@ -328,6 +342,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
   },
 
   take: () => {
+    if (get().dawnRunning) return;
     const s = get();
     const amount = transferSats(s.tape);
     if (s.king.testBalance < amount) return;
@@ -342,6 +357,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
   },
 
   spawn: () => {
+    if (get().dawnRunning) return false;
     const s = get();
     const living = s.subjects.filter((x) => x.state !== "hanging").length;
     if (living >= LIVING_CAP) {
@@ -364,7 +380,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
     const rng = mulberry32(s.seed + s.subjects.length * 97 + s.day * 13);
     const taken = new Set(s.subjects.map((x) => x.firstName));
     const agent = { choice: s.brainChoice, model: s.brainModel };
-    const subject = makeSubject(rng, taken, stake, agent);
+    const subject = makeSubject(rng, taken, stake, agent, s.day);
     const king = syncPurse({
       ...s.king,
       testBalance: s.king.testBalance - stake,
@@ -381,7 +397,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
       log: pushLog(
         s,
         "crown",
-        `You make ${subject.firstName}, staked £${STAKE_GBP}, linked to ${label}. The King cannot make souls. They must earn online or the tax will take them.`,
+        `You make ${subject.firstName}, staked £${STAKE_GBP}, linked to ${label}. Souls must earn online or the tax will take them.`,
       ),
     });
 
@@ -391,12 +407,13 @@ export const useGame = create<GameState & Actions>((set, get) => ({
   },
 
   setTax: (rate) => {
+    if (get().dawnRunning) return;
     const s = get();
     const taxRate = clamp(Math.round(rate * 100) / 100, TAX_MIN, TAX_MAX);
     const next = {
       ...s,
       taxRate,
-      log: pushLog(s, "crown", `You set the tithe to ${Math.round(taxRate * 100)}%. The King may not.`),
+      log: pushLog(s, "crown", `You set the tithe to ${Math.round(taxRate * 100)}%. `),
     };
     persist(next);
     set(next);
@@ -418,6 +435,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
   },
 
   setAgent: (id, choice, model = "") => {
+    if (get().dawnRunning) return;
     const s = get();
     const label = choiceLabel(choice, model, s.brainCatalog);
     if (id === "king") {
@@ -425,7 +443,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
       const next = {
         ...s,
         king,
-        log: pushLog(s, "system", `The King is linked to ${label}. He still cannot make anyone.`),
+        log: pushLog(s, "system", `The King is linked to ${label}. `),
       };
       persist(next);
       set(next);
@@ -463,6 +481,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
   },
 
   updateWallet: (id, patch) => {
+    if (get().dawnRunning) return "Wait for dawn to finish.";
     const s = get();
     const isKing = id === "king";
     const sub = isKing ? null : s.subjects.find((x) => x.id === id);
@@ -548,6 +567,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
     const current = get();
     if (current.dawnRunning) return;
     set({ dawnRunning: true });
+    try {
 
     let tape: Tape = current.tape;
     try {
@@ -691,6 +711,12 @@ export const useGame = create<GameState & Actions>((set, get) => ({
       }
       const advice = adviceById.get(sub.id);
       const chainMode = sub.walletMode === "chain";
+      // Income is whatever the watched wallet gained. A failed lookup this dawn never counts against a villager.
+      const observed = chainMode && chainById.has(sub.id) && prevChain != null;
+      const income = observed ? walletIncome(prevChain, chainBalance) : 0;
+      const dry = observed ? nextDryDays(sub.dryDays ?? 0, income) : (sub.dryDays ?? 0);
+      const earned = (sub.earnedSats ?? 0) + income;
+      const starved = chainMode && isStarved(dry, chainBalance);
       const result = runSubjectDawn({
         balance: sub.testBalance,
         taxRate: s.taxRate,
@@ -703,6 +729,7 @@ export const useGame = create<GameState & Actions>((set, get) => ({
         chainBalance,
       });
       kingTest += result.tithe;
+      const hanged = result.hanged || starved;
       const flavor =
         advice?.say?.trim() ||
         subjectFlavor(sub.firstName, result.action, result.side, result.income, tape);
@@ -726,12 +753,14 @@ export const useGame = create<GameState & Actions>((set, get) => ({
             ? POI.square
             : wanderPoint(rng);
 
-      if (result.hanged) {
+      if (hanged) {
         kingTest += result.leftover;
         push(
           "death",
           chainMode
-            ? `${sub.firstName}'s on-chain watch is empty. The King's tax finds them, and they are walked to the gallows.`
+            ? (chainBalance ?? 1) <= 0
+              ? `${sub.firstName}'s wallet is empty. They are walked to the gallows.`
+              : `${sub.firstName} earned nothing for ${Math.min(dry, DRY_DAYS_LIMIT)} dawns. They are walked to the gallows.`
             : `${sub.firstName} cannot pay the King's tax, and is walked to the gallows.`,
         );
         nextSubjects.push(
@@ -739,6 +768,8 @@ export const useGame = create<GameState & Actions>((set, get) => ({
             ...sub,
             chainBalance,
             testBalance: 0,
+            earnedSats: earned,
+            dryDays: dry,
             lastPnl: 0,
             lastAction: result.action,
             lastFlavor: flavor,
@@ -754,6 +785,8 @@ export const useGame = create<GameState & Actions>((set, get) => ({
             ...sub,
             chainBalance,
             testBalance: result.balance,
+            earnedSats: earned,
+            dryDays: dry,
             lastPnl: 0,
             lastAction: result.action,
             lastFlavor: flavor,
@@ -761,6 +794,32 @@ export const useGame = create<GameState & Actions>((set, get) => ({
             destY: dest.y + (rng() - 0.5) * 28,
             state: result.action === "earn" ? "work" : result.action === "idle" ? "idle" : "walk",
           }),
+        );
+      }
+    }
+
+    // The King opens new villagers from his own treasury, by a fixed rule, and only while the parish earns.
+    {
+      const alive = nextSubjects.filter((x) => x.state !== "condemned" && x.state !== "hanging");
+      const stake = stakeSats(tape);
+      const count = kingSpawnCount({
+        treasury: kingTest,
+        living: alive.length,
+        unproven: alive.filter((x) => (x.earnedSats ?? 0) === 0).length,
+        policy: defaultKingPolicy(stake, LIVING_CAP),
+      });
+      const taken = new Set(nextSubjects.map((x) => x.firstName));
+      for (let i = 0; i < count; i++) {
+        const parent = pickParent(alive);
+        const agent = parent
+          ? { choice: parent.brainChoice, model: parent.brainModel }
+          : { choice: s.brainChoice, model: s.brainModel };
+        const child = makeSubject(rng, taken, stake, agent, day);
+        kingTest -= stake;
+        nextSubjects.push(child);
+        push(
+          "crown",
+          `The King opens ${child.firstName} from the treasury, staked ${formatPurse(stake, tape)}${parent ? `, with the setup of ${parent.firstName}, his best earner` : ""}.`,
         );
       }
     }
@@ -813,6 +872,10 @@ export const useGame = create<GameState & Actions>((set, get) => ({
     });
     persist(next);
     set(next);
+    } catch (err) {
+      console.error("dawn failed", err);
+      set({ dawnRunning: false });
+    }
   },
 
   converse: async (toId, text, shout = false) => {

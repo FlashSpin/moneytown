@@ -1,10 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 
-export type CounselPrefer = "grok" | "pollinations" | "any";
+import { parseCounselInput, type CounselPrefer } from "./counsel-input";
+
+export type { CounselPrefer };
 
 export const askCounsel = createServerFn({ method: "POST" })
-  .validator((input: { prompt: string; prefer?: CounselPrefer }) => input)
+  .validator((input: unknown) => parseCounselInput(input))
   .handler(async ({ data }) => {
-    const { askGrokCounsel } = await import("./counsel.server");
-    return askGrokCounsel(data.prompt, data.prefer ?? "any");
+    const { askGrokCounselLimited } = await import("./counsel.server");
+    return askGrokCounselLimited(data.prompt, data.prefer);
   });

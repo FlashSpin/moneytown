@@ -5,7 +5,7 @@ export type KingAction = "hold";
 export type WalkDir = "down" | "left" | "right" | "up";
 export type AgentState = "idle" | "walk" | "work" | "condemned" | "hanging";
 export type BodySheet = "king" | "man" | "woman";
-export type BrainKind = "grok" | "pollinations" | "heuristic";
+export type BrainKind = "claude" | "grok" | "pollinations" | "heuristic";
 
 export type BrainInfo = { kind: BrainKind; label: string };
 
@@ -97,4 +97,6 @@ export type GameState = {
   seed: number;
   brain: BrainInfo;
   speech: SpeechLine[];
+  /** Today's petitions to the King — resets when the day changes. Absent on older saves. */
+  petitions?: { day: number; count: number; summoned: number };
 };

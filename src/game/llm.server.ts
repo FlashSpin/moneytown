@@ -1,13 +1,14 @@
 /**
  * AI counsel for the daily tick — server-only. Everyone (King and every
- * villager) shares one fixed cascade: Grok, then free Pollinations, then the
+ * villager) shares one fixed cascade: Claude, then Grok, then free
+ * Pollinations (see src/lib/counsel.server.ts), then the
  * caller's own heuristic fallback (this module never invents a decision
  * itself; `counselDawn` returns null on total failure). There is no more
  * per-soul model choice — that was a player-facing control, now removed —
  * and no local-model backends (Ollama/LM Studio/on-device), which only ever
  * made sense from a visitor's own browser, not a server cron.
  */
-import { askGrokCounsel } from "@/lib/counsel.server";
+import { askCounsel } from "@/lib/counsel.server";
 import { RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
 import { ASSETS, type Asset, type Side } from "./dawn";
 import { trimSpeech } from "./brains";
@@ -191,12 +192,14 @@ function parseCounsel(
 
 /** Grok, then free Pollinations. Both are plain server-to-server HTTPS calls. */
 async function decide(prompt: string): Promise<{ text: string; brain: BrainInfo }> {
-  const res = await askGrokCounsel(prompt);
+  const res = await askCounsel(prompt);
   if (res.ok && res.text.trim()) {
     const brain: BrainInfo =
-      res.source === "pollinations"
-        ? { kind: "pollinations", label: "Free online wits" }
-        : { kind: "grok", label: "Grok (online)" };
+      res.source === "claude"
+        ? { kind: "claude", label: "Claude" }
+        : res.source === "pollinations"
+          ? { kind: "pollinations", label: "Free online wits" }
+          : { kind: "grok", label: "Grok (online)" };
     return { text: res.text, brain };
   }
   throw new Error(res.ok ? "empty reply" : res.error);

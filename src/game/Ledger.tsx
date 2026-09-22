@@ -1,5 +1,6 @@
 import { Crown, ScrollText } from "lucide-react";
 import { LIVING_CAP, RENT_GBP } from "./constants";
+import { KingAudience } from "./KingAudience";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
 import type { Tape } from "./types";
@@ -123,12 +124,14 @@ export function Ledger() {
         <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
       </section>
 
+      <KingAudience />
+
       <section>
         <p className="section-label">
           Parish · {living.length}/{LIVING_CAP} living
         </p>
         {living.length === 0 ? (
-          <p className="hint">No souls yet. The King's treasury will open one soon.</p>
+          <p className="hint">No souls yet. Petition the King to summon one, or wait for his treasury to open one at dawn.</p>
         ) : (
           <ul className="parish-roll">
             {living.map((sub) => (

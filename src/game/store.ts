@@ -1,15 +1,23 @@
 import { create } from "zustand";
 import { getWorldState } from "@/lib/world";
+import { petitionTheKing } from "@/lib/petition";
 import { playDawn, playHang, playShout, playSpawn, playTalk } from "./audio";
-import { ambientTalk } from "./brains";
-import { HANG_SECS, POI, WALK_SPEED } from "./constants";
+import { ambientTalk, trimSpeech } from "./brains";
+import { HANG_SECS, POI, SHOUT_LIFE, WALK_SPEED } from "./constants";
 import { facing, GALLOWS_DROP, GALLOWS_WATCH, moveToward, wanderPoint } from "./town";
 import type { GameState, King, Subject } from "./types";
 import { freshWorld } from "./world";
 import { uid } from "./wallets";
 
+/** One line of this visitor's private audience with the King. */
+export type AudienceLine = { id: string; from: "you" | "king" | "note"; text: string };
+
 /** Client-only viewer state — never part of the server-authoritative GameState. */
 type ViewState = {
+  audience: AudienceLine[];
+  petitioning: boolean;
+  /** Which AI answered the last petition; null = none reachable (stock replies); undefined = not asked yet. */
+  kingBrain: string | null | undefined;
   selectedId: string | null;
   loading: boolean;
   /** True once a real server world has been applied (the placeholder is not one). */
@@ -21,6 +29,7 @@ type ViewState = {
 
 type Actions = {
   loadWorld: () => Promise<void>;
+  petition: (message: string) => Promise<void>;
   select: (id: string | null) => void;
   tick: (dt: number) => void;
 };
@@ -30,13 +39,51 @@ function actor(s: GameState, id: string): King | Subject | null {
   return s.subjects.find((x) => x.id === id) ?? null;
 }
 
+type Store = GameState & ViewState & Actions;
+
+/**
+ * Fold a server world into the live view. A new day replaces everything; the
+ * same day (a petition's summons, seen by any visitor) only adds what is new,
+ * so walkers keep their places and the day's speech isn't replayed.
+ */
+function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
+  if (!prev.synced || world.day !== prev.day) {
+    if (prev.synced && world.day > prev.day) playDawn();
+    if (prev.synced && world.subjects.length > prev.subjects.length) playSpawn();
+    return { ...world, loading: false, synced: true, error: null };
+  }
+  const known = new Set(prev.subjects.map((x) => x.id));
+  // Condemned souls already hanged (and removed) here must not walk back in.
+  const arrivals = world.subjects.filter(
+    (x) => !known.has(x.id) && x.state !== "condemned" && x.state !== "hanging",
+  );
+  const logIds = new Set(prev.log.map((e) => e.id));
+  const fresh = world.log.filter((e) => !logIds.has(e.id));
+  if (!arrivals.length && !fresh.length && world.king.balance === prev.king.balance) {
+    return prev.error ? { error: null } : null;
+  }
+  if (arrivals.length) playSpawn();
+  prev.king.balance = world.king.balance;
+  return {
+    subjects: [...prev.subjects, ...arrivals],
+    king: prev.king,
+    exchequer: world.exchequer,
+    log: [...fresh, ...prev.log].slice(0, 80),
+    petitions: world.petitions,
+    error: null,
+  };
+}
+
 function speakerName(s: GameState, id: string): string {
   if (id === "king") return "The King";
   return s.subjects.find((x) => x.id === id)?.firstName ?? "A voice";
 }
 
-export const useGame = create<GameState & ViewState & Actions>((set, get) => ({
+export const useGame = create<Store>((set, get) => ({
   ...freshWorld(0),
+  audience: [],
+  petitioning: false,
+  kingBrain: undefined,
   selectedId: null,
   loading: true,
   synced: false,
@@ -46,19 +93,53 @@ export const useGame = create<GameState & ViewState & Actions>((set, get) => ({
   loadWorld: async () => {
     try {
       const world = await getWorldState();
-      const prev = get();
-      // Only the daily cron writes the world, so a same-day poll carries
-      // nothing new — applying it would snap every walker back to their
-      // stored spot, replay the day's speech and re-march the condemned.
-      if (prev.synced && world.day === prev.day) {
-        if (prev.error) set({ error: null });
-        return;
-      }
-      if (prev.synced && world.day > prev.day) playDawn();
-      if (prev.synced && world.subjects.length > prev.subjects.length) playSpawn();
-      set({ ...world, loading: false, synced: true, error: null });
+      const patch = mergeWorld(get(), world);
+      if (patch) set(patch);
     } catch {
       set({ loading: false, error: "Could not reach the parish. Retrying shortly." });
+    }
+  },
+
+  petition: async (message) => {
+    const text = message.trim();
+    if (!text || get().petitioning) return;
+    const history = get()
+      .audience.filter((l) => l.from !== "note")
+      .slice(-6)
+      .map((l) => ({ from: l.from as "you" | "king", text: l.text.slice(0, 400) }));
+    const line = (from: AudienceLine["from"], t: string): AudienceLine => ({ id: uid("a", Math.random), from, text: t });
+    set({ petitioning: true, audience: [...get().audience, line("you", text)] });
+    try {
+      const res = await petitionTheKing({ data: { message: text, history } });
+      if ("throttled" in res) {
+        set({ audience: [...get().audience, line("note", "The herald bids thee wait a moment before speaking again.")] });
+        return;
+      }
+      const patch = mergeWorld(get(), res.world);
+      if (patch) set(patch);
+      const notes: AudienceLine[] = [];
+      if (res.summoned.length) notes.push(line("note", `Summoned: ${res.summoned.join(", ")}.`));
+      if (res.limitNote) notes.push(line("note", res.limitNote));
+      set({ audience: [...get().audience, line("king", res.reply), ...notes].slice(-30), kingBrain: res.brain });
+      // The King says it aloud in the square, too — replacing whatever he
+      // was still saying, so two royal bubbles never stack.
+      const speech = get().speech.filter((l) => l.fromId !== "king" && l.toId !== "king");
+      set({ speech });
+      speech.push({
+        id: uid("t", Math.random),
+        fromId: "king",
+        toId: null,
+        text: trimSpeech(res.reply),
+        shout: true,
+        age: -0.2,
+        life: SHOUT_LIFE,
+        heard: false,
+        logged: true,
+      });
+    } catch {
+      set({ audience: [...get().audience, line("note", "The King could not be reached. Try again shortly.")] });
+    } finally {
+      set({ petitioning: false });
     }
   },
 

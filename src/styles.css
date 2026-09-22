@@ -421,3 +421,155 @@
     border-top: 1px solid var(--color-rule);
   }
 }
+
+/* ── Audience with the King ─────────────────────────────── */
+.audience {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--color-crimson) 35%, var(--color-rule));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-parchment) 55%, white);
+}
+
+.audience .section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-crimson);
+}
+
+.audience .hint {
+  margin: 0;
+}
+
+.audience-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.audience-log li {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  max-width: 92%;
+}
+
+.audience-log li[data-from="you"] {
+  align-self: flex-end;
+  background: color-mix(in oklab, var(--color-moss) 14%, white);
+  border: 1px solid color-mix(in oklab, var(--color-moss) 30%, transparent);
+}
+
+.audience-log li[data-from="king"] {
+  align-self: flex-start;
+  background: color-mix(in oklab, var(--color-crimson) 9%, white);
+  border: 1px solid color-mix(in oklab, var(--color-crimson) 28%, transparent);
+  font-style: italic;
+}
+
+.audience-log li[data-from="note"] {
+  align-self: center;
+  max-width: 100%;
+  padding: 2px 4px;
+  font-size: 0.76rem;
+  color: var(--color-timber);
+  text-align: center;
+}
+
+.audience-who {
+  display: block;
+  font-family: var(--font-display);
+  font-style: normal;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+.audience-wait {
+  opacity: 0.75;
+}
+
+.audience-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  min-height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--color-rule);
+  background: color-mix(in oklab, var(--color-parchment) 40%, white);
+  color: var(--color-ink);
+  transition: background var(--motion-quick) var(--ease-out);
+}
+
+.chip:hover:not(:disabled) {
+  background: white;
+}
+
+.audience-form {
+  display: flex;
+  gap: 6px;
+}
+
+.audience-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 16px; /* no iOS zoom on focus */
+  color: var(--color-ink);
+  background: white;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+}
+
+.audience-input:focus-visible {
+  outline: 2px solid var(--color-crimson);
+  outline-offset: 1px;
+}
+
+.audience-send {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 40px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-crimson);
+  color: var(--color-parchment);
+  transition: opacity var(--motion-quick) var(--ease-out);
+}
+
+.audience-send:disabled,
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.audience-brain {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--color-moss-deep);
+}
+
+.audience-brain[data-live="no"] {
+  color: var(--color-ink-soft);
+}

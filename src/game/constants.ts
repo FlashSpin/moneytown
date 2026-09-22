@@ -16,6 +16,14 @@ export const TAX_DEFAULT = 0.2;
 export const SATS_PER_BTC = 100_000_000;
 export const LIVING_CAP = 24;
 
+/** Petitions to the King — every limit is enforced in code, whatever the King's AI says. */
+export const SUMMONS_PER_PETITION = 3;
+/** Souls the King may summon by petition per day, across every visitor. */
+export const SUMMONS_PER_DAY = 6;
+/** Hard ceiling on petitions (AI calls) per day, across every visitor. */
+export const PETITIONS_PER_DAY = 300;
+export const PETITION_MAX_CHARS = 280;
+
 /** How often the client re-fetches the shared world. The world itself only changes once a day. */
 export const WORLD_POLL_MS = 60_000;
 

@@ -1,7 +1,8 @@
 /**
  * Grok, falling back to free Pollinations — both plain server-to-server HTTPS
- * calls. Called only from the daily-tick cron path (src/game/llm.server.ts),
- * never from a client-facing endpoint, so no rate limiting is needed here.
+ * calls. Called from the daily-tick cron path (src/game/llm.server.ts) and
+ * from petitions to the King (src/lib/petition.ts), which is rate-limited
+ * per visitor and capped per day there.
  */
 export async function askGrokCounsel(prompt: string): Promise<
   | { ok: true; text: string; source: "grok" | "pollinations" }

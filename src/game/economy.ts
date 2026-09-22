@@ -42,3 +42,26 @@ export function kingSpawnCount(input: {
   const byProof = Math.max(0, policy.maxUnproven - unproven);
   return Math.max(0, Math.min(byMoney, bySlots, byProof, policy.maxSpawnsPerDawn));
 }
+
+/**
+ * How many souls a petition may have summoned, whatever the King's AI asked
+ * for. Same treasury reserve as the daily rule, plus a per-petition and a
+ * per-day ceiling so no one visitor (or a clever prompt) can empty the crown.
+ */
+export function petitionSummonCount(input: {
+  requested: number;
+  treasury: number;
+  living: number;
+  summonedToday: number;
+  policy: KingPolicy;
+  perPetition: number;
+  perDay: number;
+}): number {
+  const { requested, treasury, living, summonedToday, policy, perPetition, perDay } = input;
+  if (!Number.isFinite(requested) || requested <= 0 || policy.stakeSats <= 0) return 0;
+  const spendable = treasury - policy.reserveSats;
+  const byMoney = spendable < policy.stakeSats ? 0 : Math.floor(spendable / policy.stakeSats);
+  const bySlots = Math.max(0, policy.maxLiving - living);
+  const byDay = Math.max(0, perDay - summonedToday);
+  return Math.max(0, Math.min(Math.floor(requested), byMoney, bySlots, byDay, perPetition));
+}

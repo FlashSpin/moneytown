@@ -97,4 +97,6 @@ export type GameState = {
   seed: number;
   brain: BrainInfo;
   speech: SpeechLine[];
+  /** Today's petitions to the King — resets when the day changes. Absent on older saves. */
+  petitions?: { day: number; count: number; summoned: number };
 };

@@ -1,19 +1,13 @@
+import type { Asset, Side } from "./dawn.ts";
+
 export type SubjectAction = "earn" | "idle" | "walk";
 export type KingAction = "hold";
 export type WalkDir = "down" | "left" | "right" | "up";
 export type AgentState = "idle" | "walk" | "work" | "condemned" | "hanging";
 export type BodySheet = "king" | "man" | "woman";
-export type WalletMode = "test" | "chain";
-export type BrainKind = "ollama" | "lmstudio" | "chrome" | "grok" | "pollinations" | "heuristic";
-export type BrainChoice = "auto" | BrainKind;
+export type BrainKind = "grok" | "pollinations" | "heuristic";
 
 export type BrainInfo = { kind: BrainKind; label: string };
-
-export type BrainCatalog = {
-  ollama: string[];
-  lmstudio: string[];
-  chrome: boolean;
-};
 
 /** Silent FX for showing Bitcoin wallets in £ — never shown as a game tape. */
 export type Tape = {
@@ -25,6 +19,8 @@ export type Tape = {
   dark: boolean;
   source: string;
   fetchedAt: number;
+  /** Live price + 24h change per tradable asset — BTC mirrors the fields above. */
+  assets: Record<Asset, { usd: number; change24h: number }>;
 };
 
 export type SpeechLine = {
@@ -40,10 +36,8 @@ export type SpeechLine = {
 };
 
 export type PurseFields = {
+  /** Flavor-only placeholder address — never a real key, never editable by a visitor. */
   wallet: string;
-  walletMode: WalletMode;
-  testBalance: number;
-  chainBalance: number | null;
   balance: number;
 };
 
@@ -63,13 +57,10 @@ export type Subject = PurseFields & {
   frameT: number;
   state: AgentState;
   hangT: number;
-  brainChoice: BrainChoice;
-  brainModel: string;
-  /** Lifetime sats seen arriving in this villager's watched wallet. */
-  earnedSats?: number;
-  /** Consecutive dawns with no new money in the watched wallet. */
-  dryDays?: number;
   bornDay?: number;
+  /** This villager's current trading position, chosen by their linked agent each day. */
+  asset?: Asset;
+  side?: Side;
 };
 
 export type King = PurseFields & {
@@ -83,8 +74,8 @@ export type King = PurseFields & {
   frameT: number;
   lastAction: KingAction;
   lastFlavor: string;
-  brainChoice: BrainChoice;
-  brainModel: string;
+  /** The asset the King currently directs the parish to favor. */
+  favorAsset?: Asset;
 };
 
 export type LogEntry = {
@@ -94,9 +85,8 @@ export type LogEntry = {
   kind: "dawn" | "crown" | "subject" | "death" | "tape" | "system" | "talk";
 };
 
+/** The whole shared, server-authoritative world — the JSON stored in world_state.state. */
 export type GameState = {
-  version: number;
-  started: boolean;
   day: number;
   exchequer: number;
   king: King;
@@ -104,15 +94,7 @@ export type GameState = {
   taxRate: number;
   tape: Tape;
   log: LogEntry[];
-  selectedId: string | null;
-  dawnRunning: boolean;
-  talking: boolean;
   seed: number;
   brain: BrainInfo;
-  /** Default agent linked onto the next soul you make. */
-  brainChoice: BrainChoice;
-  brainModel: string;
-  brainCatalog: BrainCatalog;
   speech: SpeechLine[];
-  talkCd: number;
 };

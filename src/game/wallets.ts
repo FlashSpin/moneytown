@@ -1,4 +1,4 @@
-import { RENT_GBP, SATS_PER_BTC, STAKE_GBP, TRANSFER_GBP } from "./constants.ts";
+import { RENT_GBP, SATS_PER_BTC, STAKE_GBP } from "./constants.ts";
 
 const BECH32 = "023456789acdefghjklmnpqrstuvwxyz";
 
@@ -20,12 +20,6 @@ export function fakeWallet(rng: () => number): string {
     out += BECH32[Math.floor(rng() * BECH32.length)] ?? "q";
   }
   return out;
-}
-
-export function isBtcAddress(raw: string): boolean {
-  const a = raw.trim();
-  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,74}$/.test(a)) return true;
-  return false;
 }
 
 export function pick<T>(list: readonly T[], rng: () => number): T {
@@ -92,10 +86,6 @@ export function rentSats(tape: { btcGbp: number; btcUsd: number }): number {
   return gbpToSats(RENT_GBP, tapeGbp(tape));
 }
 
-export function transferSats(tape: { btcGbp: number; btcUsd: number }): number {
-  return gbpToSats(TRANSFER_GBP, tapeGbp(tape));
-}
-
 export function formatPurse(sats: number, tape: { btcGbp: number; btcUsd: number }): string {
   return formatGbp(satsToGbp(sats, tapeGbp(tape)));
 }
@@ -105,18 +95,7 @@ export function formatPct(n: number): string {
   return `${sign}${n.toFixed(2)}%`;
 }
 
-export type PurseLike = {
-  walletMode: string;
-  testBalance: number;
-  chainBalance: number | null;
-};
-
-export function activePurse(sub: PurseLike): number {
-  if (sub.walletMode === "chain" && sub.chainBalance != null) return sub.chainBalance;
-  return sub.testBalance;
-}
-
-/** The exchequer is the sum of every shown purse — king and living subjects. */
-export function sumExchequer(king: PurseLike, subjects: PurseLike[]): number {
-  return activePurse(king) + subjects.reduce((n, x) => n + activePurse(x), 0);
+/** The exchequer is the sum of every purse — king and living subjects. */
+export function sumExchequer(king: { balance: number }, subjects: { balance: number }[]): number {
+  return king.balance + subjects.reduce((n, x) => n + x.balance, 0);
 }

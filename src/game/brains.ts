@@ -1,64 +1,68 @@
 import { SHOUT_LIFE, SPEECH_LIFE } from "./constants";
-import type { Side } from "./dawn";
+import type { Asset, Side } from "./dawn";
 import type { SpeechLine, SubjectAction, Tape } from "./types";
 import { pick, uid } from "./wallets";
 
 const SQUARE_MUTTER = [
-  "The game pays no wage. We must earn online.",
-  "The King's tax comes due. Make money in the world, or the rope.",
+  "The markets move whether we watch or no. Mind thy position.",
+  "The King's tax comes due. Trade well, or the rope.",
   "Keep thy purse close, neighbour.",
-  "A real wallet, or a test edit — nothing in-game.",
+  "Long, short, or flat — choose, and live with it.",
   "The chain is watch-only; no keys in this parish.",
   "If the purse cannot pay the tax, we hang.",
-  "Twenty pound to start. Link thy agent, and work online.",
+  "Twenty pound to start. Link thy agent, and trade wisely.",
 ];
 
 const PAIR_TALK: [string, string][] = [
-  ["Hast thou made any money online?", "Not a penny from the game — only the world pays."],
-  ["The tax is heavy upon us.", "Then earn beyond these walls, or the rope shall."],
-  ["The player linked an agent to me.", "Think, then, and fill the purse — or hang."],
+  ["Hast thou made any money on the markets?", "Some days the tape favours me, some days not."],
+  ["The tax is heavy upon us.", "Then trade well beyond these walls, or the rope shall."],
+  ["The King linked an agent to me.", "Think, then, and mind the purse — or hang."],
   ["The chain is watch-only, neighbour.", "Aye — no keys are kept here."],
-  ["Shall we idle?", "Idle and hang. Go online."],
+  ["Shall we sit flat?", "Sit too long and the tax still comes. Choose a side."],
 ];
 
 const VILLAGER_SHOUTS = [
-  "Hear the square! No wage in the game!",
-  "Neighbours — make money online, or the tax shall take us!",
+  "Hear the square! Watch the tape, mind thy purse!",
+  "Neighbours — trade with care, or the tax shall take us!",
   "Watch the chain! That is real coin!",
-  "Twenty pound to start — do not waste it!",
+  "Twenty pound to start — do not waste it on a bad bet!",
 ];
 
 const KING_SHOUTS = [
-  "Hear ye! Make money online. The game pays nothing.",
-  "My treasury opens new souls only while the old ones prove they can earn. Earn, or the rope.",
-  "My subjects — I command you. Work beyond these walls.",
-  "Peace in the parish. Talk, work online, pay the tax.",
+  "Hear ye! Trade the markets with care. The purse that gambles ill shall hang.",
+  "My treasury opens new souls only while the old ones prove they can trade. Prosper, or the rope.",
+  "My subjects — I favour a market. Weigh my counsel, but think for yourselves.",
+  "Peace in the parish. Talk, trade well, pay the tax.",
 ];
 
 const KING_ASIDES = [
-  "I command these wallets, and my treasury opens new souls for those who earn.",
-  "Pay my tax, or the rope. Earn in the world.",
-  "The player makes souls and links their agents. I only command.",
+  "I command these wallets, and my treasury opens new souls for those who trade well.",
+  "Pay my tax, or the rope. Mind the markets.",
+  "The treasury opens new souls of its own accord. I set the favoured market and command.",
 ];
+
+const ASSET_NOUN: Record<Asset, string> = { BTC: "Bitcoin", ETH: "Ether", SOL: "Solana" };
 
 export function subjectFlavor(
   name: string,
   action: SubjectAction,
-  _side: Side,
-  _income: number,
+  side: Side,
+  asset: Asset,
+  income: number,
   _tape: Tape,
 ): string {
-  if (action === "idle") {
-    return `${name} idles. The game pays no wage. The tax still falls.`;
+  if (side !== "flat") {
+    const verb = side === "long" ? "backs" : "bets against";
+    const mood = income > 0 ? "and prospers by it" : income < 0 ? "and takes a loss" : "and holds steady";
+    return `${name} ${verb} ${ASSET_NOUN[asset]} ${mood}.`;
   }
-  if (action === "walk") {
-    return `${name} walks the parish, seeking work online.`;
-  }
-  return `${name} works online. No coin is made inside the game — only a real wallet or a test edit can grow the purse.`;
+  if (action === "idle") return `${name} idles, purse sitting flat on no position.`;
+  if (action === "walk") return `${name} walks the parish, weighing the markets.`;
+  return `${name} watches the tape, purse untouched today.`;
 }
 
-export function kingFlavor(): string {
-  return "The King holds, and commands those already made to make money online. His treasury opens new souls only while they earn.";
+export function kingFlavor(favorAsset: Asset): string {
+  return `The King commands the parish and favours ${ASSET_NOUN[favorAsset]} this day. His treasury opens new souls only while they trade well.`;
 }
 
 function line(
@@ -152,49 +156,4 @@ export function trimSpeech(text: string): string {
   const t = text.replace(/\s+/g, " ").trim();
   if (t.length <= 90) return t;
   return `${t.slice(0, 87).replace(/\s+\S*$/, "")}…`;
-}
-
-export function heuristicReply(opts: {
-  king: boolean;
-  name: string;
-  playerText: string;
-  shout: boolean;
-}): { say: string; shout: boolean } {
-  const t = opts.playerText.toLowerCase();
-  if (opts.king) {
-    if (/tithe|tax/.test(t)) {
-      return { say: "The tax is thine to set. Those who cannot pay it hang. I shall not touch the rate.", shout: opts.shout };
-    }
-    if (/make|spawn|create|soul/.test(t)) {
-      return { say: "My treasury opens new souls by rule, and only while the parish earns.", shout: false };
-    }
-    if (/coin|money|grant|gift|give|stake/.test(t)) {
-      return { say: "Twenty pound is the start. After that they make money online, or my tax hangs them.", shout: false };
-    }
-    if (/hang|gallows|rope/.test(t)) {
-      return { say: "The rope is for a purse that owed my tax and could not pay.", shout: false };
-    }
-    if (/wallet|address|chain/.test(t)) {
-      return { say: "My wallet is watched as thine is. No keys are kept in this parish.", shout: false };
-    }
-    if (opts.shout) return { say: pick(KING_SHOUTS, Math.random), shout: true };
-    return { say: pick(KING_ASIDES, Math.random), shout: false };
-  }
-  if (/tithe|tax/.test(t)) {
-    return { say: "The King's tax is heavy — if the purse holds not, the rope will.", shout: false };
-  }
-  if (/agent|wits|model|ai/.test(t)) {
-    return { say: "I am the agent linked to this soul. I must think, and make money online.", shout: false };
-  }
-  if (/tape|bitcoin|market/.test(t)) {
-    return { say: "No market in this game pays us. We make money online, or we hang.", shout: false };
-  }
-  if (/hang|gallows|rope/.test(t)) {
-    return { say: "Speak not of the rope. Pay the tax, and it shall not find me.", shout: false };
-  }
-  if (/wallet|address|chain/.test(t)) {
-    return { say: "Watch-only, neighbour. No keys. Coin from the world, not the game.", shout: false };
-  }
-  if (opts.shout) return { say: pick(VILLAGER_SHOUTS, Math.random), shout: true };
-  return { say: pick(SQUARE_MUTTER, Math.random), shout: false };
 }

@@ -1,14 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  DRY_DAYS_LIMIT,
-  defaultKingPolicy,
-  isStarved,
-  kingSpawnCount,
-  nextDryDays,
-  pickParent,
-  walletIncome,
-} from "./economy.ts";
+import { defaultKingPolicy, kingSpawnCount } from "./economy.ts";
 
 const policy = defaultKingPolicy(1_000, 24);
 
@@ -34,39 +26,5 @@ describe("king spawning is paid from the treasury only", () => {
       }),
       0,
     );
-  });
-});
-
-describe("survival is measured by the wallet", () => {
-  it("only rises count as income", () => {
-    assert.equal(walletIncome(1_000, 1_500), 500);
-    assert.equal(walletIncome(1_000, 400), 0);
-    assert.equal(walletIncome(null, 400), 0);
-    assert.equal(walletIncome(400, null), 0);
-  });
-  it("dry days reset on income and condemn after the limit", () => {
-    let d = 0;
-    for (let i = 0; i < DRY_DAYS_LIMIT - 1; i++) d = nextDryDays(d, 0);
-    assert.equal(isStarved(d, 5_000), false);
-    d = nextDryDays(d, 0);
-    assert.equal(isStarved(d, 5_000), true);
-    assert.equal(nextDryDays(d, 1), 0);
-  });
-  it("an empty watched wallet is starved immediately", () => {
-    assert.equal(isStarved(0, 0), true);
-    assert.equal(isStarved(0, null), false);
-  });
-});
-
-describe("children inherit from the best earner", () => {
-  it("returns null when nobody has earned", () => {
-    assert.equal(pickParent([{ id: "a", brainChoice: "grok", brainModel: "" }]), null);
-  });
-  it("picks the highest lifetime earnings", () => {
-    const p = pickParent([
-      { id: "a", earnedSats: 10, brainChoice: "grok", brainModel: "" },
-      { id: "b", earnedSats: 90, brainChoice: "ollama", brainModel: "x" },
-    ]);
-    assert.equal(p?.id, "b");
   });
 });

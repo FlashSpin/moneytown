@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { applyEarn, applyRent, applyTithe, runSubjectDawn, tapePnl } from "./dawn.ts";
+import { applyRent, applyTithe, runSubjectDawn, tapePnl, tradeIncome } from "./dawn.ts";
 import type { Tape } from "./types.ts";
-import { activePurse, gbpToSats, isBtcAddress, rentSats, stakeSats, sumExchequer } from "./wallets.ts";
+import { gbpToSats, rentSats, stakeSats, sumExchequer } from "./wallets.ts";
 
 const tape: Tape = {
   btcUsd: 100_000,
@@ -13,6 +13,11 @@ const tape: Tape = {
   dark: true,
   source: "test",
   fetchedAt: 0,
+  assets: {
+    BTC: { usd: 100_000, change24h: 0 },
+    ETH: { usd: 3_500, change24h: 0 },
+    SOL: { usd: 150, change24h: 0 },
+  },
 };
 
 const dawnBase = {
@@ -76,7 +81,7 @@ describe("rent and insolvency", () => {
     assert.equal(r.balance, 0);
   });
 
-  it("hangs a subject whose test purse is already empty", () => {
+  it("hangs a subject whose purse is already empty", () => {
     const r = runSubjectDawn({
       ...dawnBase,
       balance: 0,
@@ -86,44 +91,6 @@ describe("rent and insolvency", () => {
     });
     assert.equal(r.hanged, true);
     assert.equal(r.income, 0);
-  });
-
-  it("skipDues leaves a funded purse untouched", () => {
-    const r = runSubjectDawn({
-      ...dawnBase,
-      balance: 8_000,
-      taxRate: 0.2,
-      rng: () => 0.1,
-      action: "earn",
-      skipDues: true,
-    });
-    assert.equal(r.hanged, false);
-    assert.equal(r.rentPaid, 0);
-    assert.equal(r.tithe, 0);
-    assert.equal(r.balance, 8_000);
-  });
-
-  it("chain mode never pays an in-game wage and hangs only if the watch is zero", () => {
-    const live = runSubjectDawn({
-      ...dawnBase,
-      balance: 8_000,
-      taxRate: 0.2,
-      action: "earn",
-      chainMode: true,
-      chainBalance: 90_000,
-    });
-    assert.equal(live.income, 0);
-    assert.equal(live.hanged, false);
-    assert.equal(live.rentPaid, 0);
-    const broke = runSubjectDawn({
-      ...dawnBase,
-      balance: 8_000,
-      taxRate: 0.2,
-      action: "earn",
-      chainMode: true,
-      chainBalance: 0,
-    });
-    assert.equal(broke.hanged, true);
   });
 });
 
@@ -136,34 +103,9 @@ describe("tape pnl", () => {
 });
 
 describe("wallets", () => {
-  it("accepts bech32 and legacy shapes, never keys", () => {
-    assert.equal(isBtcAddress("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"), true);
-    assert.equal(isBtcAddress("1BoatSLRHtKNngkdXEeobR76b53LETtpyT"), true);
-    assert.equal(isBtcAddress("not-an-address"), false);
-    assert.equal(isBtcAddress(""), false);
-  });
-
-  it("active purse prefers chain only when a chain balance is known", () => {
-    assert.equal(
-      activePurse({ walletMode: "test", testBalance: 40_000, chainBalance: 9 }),
-      40_000,
-    );
-    assert.equal(
-      activePurse({ walletMode: "chain", testBalance: 40_000, chainBalance: 12 }),
-      12,
-    );
-    assert.equal(
-      activePurse({ walletMode: "chain", testBalance: 40_000, chainBalance: null }),
-      40_000,
-    );
-  });
-
   it("exchequer is the sum of every purse", () => {
-    const king = { walletMode: "test", testBalance: 9_500, chainBalance: null };
-    const folk = [
-      { walletMode: "test", testBalance: 38_000, chainBalance: null },
-      { walletMode: "test", testBalance: 0, chainBalance: null },
-    ];
+    const king = { balance: 9_500 };
+    const folk = [{ balance: 38_000 }, { balance: 0 }];
     assert.equal(sumExchequer(king, folk), 47_500);
   });
 
@@ -178,10 +120,28 @@ describe("wallets", () => {
   });
 });
 
-describe("no in-game wage", () => {
-  it("earn never pays from the game, even on a live tape", () => {
-    const live: Tape = { ...tape, dark: false, change24h: 10 };
-    const r = applyEarn("earn", 25_000, live, () => 0.5, "long");
-    assert.equal(r.income, 0);
+describe("tradeIncome — real mark-to-market P&L from a real price move", () => {
+  it("is zero when flat, when the balance is zero, or when either price is unknown", () => {
+    assert.equal(tradeIncome(10_000, 100, 110, "flat"), 0);
+    assert.equal(tradeIncome(0, 100, 110, "long"), 0);
+    assert.equal(tradeIncome(10_000, 0, 110, "long"), 0);
+    assert.equal(tradeIncome(10_000, 100, 0, "long"), 0);
+  });
+
+  it("matches tapePnl fed the actual entry-to-exit percent move", () => {
+    assert.equal(tradeIncome(10_000, 100_000, 105_000, "long"), tapePnl(10_000, 5, "long"));
+    assert.equal(tradeIncome(10_000, 100_000, 95_000, "short"), tapePnl(10_000, -5, "short"));
+  });
+
+  it("a long profits when price rises, a short profits when price falls", () => {
+    assert.equal(tradeIncome(10_000, 100_000, 110_000, "long"), 1_000);
+    assert.equal(tradeIncome(10_000, 100_000, 90_000, "short"), 1_000);
+    assert.equal(tradeIncome(10_000, 100_000, 110_000, "short"), -1_000);
+  });
+
+  it("clamps a catastrophic move so it never drives the balance negative on its own", () => {
+    // A short against a price that triples implies a loss beyond the whole stake.
+    const pnl = tradeIncome(10_000, 100_000, 300_000, "short");
+    assert.equal(pnl, -10_000);
   });
 });

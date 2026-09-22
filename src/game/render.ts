@@ -1,4 +1,5 @@
-import { KING_DRAW, MAP_H, MAP_W, SUBJECT_DRAW } from "./constants";
+import { ASSET_POI, KING_DRAW, MAP_H, MAP_W, POI, SUBJECT_DRAW } from "./constants";
+import { ASSETS } from "./dawn";
 import {
   DEFAULT_CAM,
   GALLOWS_BEAM,
@@ -270,6 +271,33 @@ function drawBubble(
   ctx.restore();
 }
 
+const ASSET_LABEL_COLOR: Record<string, string> = {
+  BTC: "rgba(139, 44, 44, 0.92)",
+  ETH: "rgba(63, 92, 58, 0.92)",
+  SOL: "rgba(107, 66, 38, 0.92)",
+};
+
+/** Each tradable asset has its own building — label it so a viewer can tell them apart. */
+function drawAssetLabels(ctx: CanvasRenderingContext2D, scale: number, ox: number, oy: number) {
+  for (const asset of ASSETS) {
+    const p = POI[ASSET_POI[asset]];
+    const scr = worldToScreen(p.x, p.y, scale, ox, oy);
+    const topY = scr.y - 92 * scale;
+    ctx.save();
+    ctx.font = '700 11px "Cinzel", "Times New Roman", serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const w = ctx.measureText(asset).width + 18;
+    const h = 20;
+    roundRect(ctx, scr.x - w / 2, topY - h / 2, w, h, h / 2);
+    ctx.fillStyle = ASSET_LABEL_COLOR[asset] ?? "rgba(74, 61, 42, 0.9)";
+    ctx.fill();
+    ctx.fillStyle = "#f4e8c8";
+    ctx.fillText(asset, scr.x, topY + 1);
+    ctx.restore();
+  }
+}
+
 function drawOverlays(
   ctx: CanvasRenderingContext2D,
   opts: {
@@ -419,6 +447,7 @@ export function drawTown(
     ctx.fillRect(0, 0, viewW, viewH);
   }
 
+  drawAssetLabels(ctx, scale, ox, oy);
   drawOverlays(ctx, opts, scale, ox, oy);
 
   return { scale, ox, oy };

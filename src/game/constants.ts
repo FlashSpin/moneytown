@@ -1,16 +1,23 @@
-export const SAVE_VERSION = 7;
-export const SAVE_KEY = "ledgerford-save-v7";
+import type { Asset } from "./dawn.ts";
 
-export const KING_START = 0;
+/**
+ * Sats — there's no more player "Give" button to fund the treasury by hand,
+ * so the King needs a real bootstrap balance or the parish would never open
+ * its first soul. ~£222 at a ~74k £/BTC rate: enough to clear the reserve
+ * (2x stake) plus several stakes; `maxSpawnsPerDawn` still gates growth to
+ * one soul a day regardless.
+ */
+export const KING_START = 300_000;
 export const RENT_GBP = 1.5;
 export const STAKE_GBP = 20;
-export const TRANSFER_GBP = 50;
 export const TAX_MIN = 0;
 export const TAX_MAX = 0.6;
 export const TAX_DEFAULT = 0.2;
-export const TAX_STEP = 0.01;
 export const SATS_PER_BTC = 100_000_000;
 export const LIVING_CAP = 24;
+
+/** How often the client re-fetches the shared world. The world itself only changes once a day. */
+export const WORLD_POLL_MS = 60_000;
 
 export const MAP_W = 1792;
 export const MAP_H = 1008;
@@ -66,6 +73,11 @@ export const FALLBACK_TAPE = {
   dark: true,
   source: "dark",
   fetchedAt: 0,
+  assets: {
+    BTC: { usd: 100_000, change24h: 0 },
+    ETH: { usd: 0, change24h: 0 },
+    SOL: { usd: 0, change24h: 0 },
+  },
 };
 
 export const POI = {
@@ -80,3 +92,10 @@ export const POI = {
   square: { x: 920, y: 560 },
   kingStand: { x: 900, y: 310 },
 } as const;
+
+/** Each tradable asset has its own building — a trading villager walks there. */
+export const ASSET_POI: Record<Asset, keyof typeof POI> = {
+  BTC: "stall",
+  ETH: "stall2",
+  SOL: "table",
+};

@@ -112,7 +112,6 @@
   color: var(--color-ink-soft);
 }
 
-.tape-card,
 .inspect,
 .stat-grid {
   border: 1px solid var(--color-rule);
@@ -121,7 +120,6 @@
   background: color-mix(in oklab, var(--color-parchment) 70%, white);
 }
 
-.tape-price,
 .stat-num,
 .tithe-value {
   font-family: var(--font-mono);
@@ -142,42 +140,11 @@
   font-size: 0.85rem;
 }
 
-.tape-src,
 .hint,
-.stat-usd,
 .ledger-foot {
   margin: 2px 0 0;
   font-size: 0.78rem;
   color: var(--color-ink-soft);
-}
-
-.brain-label {
-  font-size: 0.92rem;
-}
-
-.wits-select {
-  width: 100%;
-  margin: 6px 0 4px;
-  min-height: 40px;
-  padding: 6px 10px;
-  font-family: var(--font-body);
-  font-size: 0.88rem;
-  color: var(--color-ink);
-  background: color-mix(in oklab, var(--color-parchment) 40%, white);
-  border: 1px solid color-mix(in oklab, var(--color-timber) 40%, var(--color-rule));
-  border-radius: var(--radius-sm);
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .stat-grid {
@@ -241,12 +208,32 @@
   background: color-mix(in oklab, var(--color-parchment) 30%, white);
 }
 
+.roll-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.roll-position {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.roll-up {
+  color: var(--color-gain);
+}
+
+.roll-down {
+  color: var(--color-loss);
+}
+
 .roll-money {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--color-timber);
 }
-
 
 .tithe-row {
   display: grid;
@@ -255,80 +242,9 @@
   gap: 4px 8px;
 }
 
-.tithe-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .tithe-value {
   min-width: 3.2rem;
   text-align: center;
-}
-
-.action-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.ledger-btn,
-.gate-btn,
-.icon-btn,
-.text-btn {
-  font-family: var(--font-body);
-  color: var(--color-ink);
-  background: color-mix(in oklab, var(--color-parchment) 55%, white);
-  border: 1px solid color-mix(in oklab, var(--color-timber) 45%, var(--color-rule));
-  border-radius: var(--radius-sm);
-  transition:
-    transform var(--motion-quick) var(--ease-out),
-    background var(--motion-quick) var(--ease-out);
-}
-
-.ledger-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 8px 10px;
-  font-size: 0.92rem;
-}
-
-.ledger-btn:hover,
-.icon-btn:hover,
-.gate-btn:hover {
-  background: color-mix(in oklab, var(--color-parchment) 30%, white);
-}
-
-.ledger-btn:active,
-.icon-btn:active,
-.gate-btn:active {
-  transform: scale(0.98);
-}
-
-.ledger-btn-dawn {
-  grid-column: 1 / -1;
-  background: var(--color-moss);
-  color: var(--color-parchment);
-  border-color: var(--color-moss-deep);
-}
-
-.ledger-btn-dawn:hover {
-  background: var(--color-moss-deep);
-}
-
-.ledger-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
 }
 
 .text-btn {
@@ -338,19 +254,8 @@
   font-size: 0.8rem;
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-.keycap {
-  display: inline-grid;
-  place-items: center;
-  min-width: 1.15rem;
-  padding: 0 4px;
-  border: 1px solid var(--color-rule);
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  line-height: 1.3;
-  background: color-mix(in oklab, white 50%, var(--color-parchment));
+  color: var(--color-ink);
+  cursor: pointer;
 }
 
 .inspect-head {
@@ -381,90 +286,6 @@
   margin: 0;
   color: var(--color-ink-soft);
 }
-
-.field-label {
-  display: block;
-  margin: 8px 0 3px;
-  font-size: 0.68rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--color-ink-soft);
-  font-weight: 600;
-}
-
-.wallet-input:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-
-.mode-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin: 8px 0 6px;
-}
-
-.mode-btn {
-  min-height: 40px;
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  color: var(--color-ink);
-  background: color-mix(in oklab, var(--color-parchment) 55%, white);
-  border: 1px solid color-mix(in oklab, var(--color-timber) 45%, var(--color-rule));
-  border-radius: var(--radius-sm);
-}
-
-.mode-btn-on {
-  background: var(--color-moss);
-  color: var(--color-parchment);
-  border-color: var(--color-moss-deep);
-}
-
-.wallet-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin: 6px 0 4px;
-}
-
-.wallet-err {
-  margin: 4px 0 0;
-  font-size: 0.78rem;
-  color: var(--color-crimson);
-}
-
-.talk-form {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in oklab, var(--color-rule) 80%, transparent);
-}
-
-.talk-input {
-  width: 100%;
-  min-height: 72px;
-  resize: vertical;
-  padding: 8px 10px;
-  font-family: var(--font-body);
-  font-size: 0.9rem;
-  line-height: 1.4;
-  color: var(--color-ink);
-  background: color-mix(in oklab, var(--color-parchment) 40%, white);
-  border: 1px solid color-mix(in oklab, var(--color-timber) 40%, var(--color-rule));
-  border-radius: var(--radius-sm);
-}
-
-.talk-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.talk-actions .ledger-btn:only-child {
-  grid-column: 1 / -1;
-}
-
 
 .log {
   flex: 1;
@@ -534,15 +355,6 @@
   font-size: 0.98rem;
 }
 
-.gate-btn {
-  min-height: 48px;
-  padding: 0 18px;
-  background: var(--color-moss);
-  color: var(--color-parchment);
-  border-color: var(--color-moss-deep);
-  font-size: 1rem;
-}
-
 .dawn-banner {
   position: absolute;
   top: 16px;
@@ -606,13 +418,5 @@
   .ledger {
     border-left: 0;
     border-top: 1px solid var(--color-rule);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ledger-btn,
-  .gate-btn,
-  .icon-btn {
-    transition: none;
   }
 }

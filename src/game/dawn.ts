@@ -1,11 +1,29 @@
 import type { SubjectAction, Tape } from "./types.ts";
 
 export type Side = "long" | "short" | "flat";
+export type Asset = "BTC" | "ETH" | "SOL";
+export const ASSETS: Asset[] = ["BTC", "ETH", "SOL"];
 
 export function tapePnl(stake: number, changePct: number, side: Side): number {
   if (side === "flat" || stake <= 0 || !Number.isFinite(changePct)) return 0;
   const dir = side === "long" ? 1 : -1;
   return Math.round(stake * (changePct / 100) * dir);
+}
+
+/**
+ * Real mark-to-market P&L for one villager's dawn: diffs their asset's price
+ * since the LAST dawn against the new one, using their whole purse as stake.
+ * Clamped so a single dawn can never drive the balance negative on its own.
+ */
+export function tradeIncome(
+  balance: number,
+  prevPriceUsd: number,
+  currPriceUsd: number,
+  side: Side,
+): number {
+  if (side === "flat" || balance <= 0 || !(prevPriceUsd > 0) || !(currPriceUsd > 0)) return 0;
+  const changePct = ((currPriceUsd - prevPriceUsd) / prevPriceUsd) * 100;
+  return Math.max(tapePnl(balance, changePct, side), -balance);
 }
 
 export function chooseSide(tape: Tape, rng: () => number): Side {
@@ -17,21 +35,10 @@ export function chooseSide(tape: Tape, rng: () => number): Side {
   return rng() > 0.5 ? "long" : "flat";
 }
 
-/** King orders online work (earn) or rest. Earn never pays in-game. */
+/** King orders online work (earn) or rest — flavor for the town animation, not income. */
 export function chooseSubjectAction(balance: number, _tape: Tape, rng: () => number): SubjectAction {
   if (balance <= 0) return "idle";
   return rng() < 0.85 ? "earn" : rng() < 0.5 ? "walk" : "idle";
-}
-
-/** There is no in-game wage. Online money is on-chain (or a test edit). */
-export function applyEarn(
-  _action: SubjectAction,
-  _balance: number,
-  _tape: Tape,
-  _rng: () => number,
-  forcedSide?: Side,
-): { income: number; side: Side } {
-  return { income: 0, side: forcedSide ?? "flat" };
 }
 
 export function applyRent(balance: number, rent: number): { balance: number; paid: number } {
@@ -57,10 +64,7 @@ export function runSubjectDawn(opts: {
   rng: () => number;
   action?: SubjectAction;
   side?: Side;
-  skipDues?: boolean;
   rentSats: number;
-  chainMode?: boolean;
-  chainBalance?: number | null;
 }): {
   action: SubjectAction;
   income: number;
@@ -73,33 +77,6 @@ export function runSubjectDawn(opts: {
 } {
   const action = opts.action ?? chooseSubjectAction(opts.balance, opts.tape, opts.rng);
   const side = opts.side ?? "flat";
-
-  if (opts.chainMode) {
-    const broke = opts.chainBalance != null && opts.chainBalance <= 0;
-    return {
-      action,
-      income: 0,
-      rentPaid: 0,
-      tithe: 0,
-      balance: opts.balance,
-      hanged: broke,
-      leftover: 0,
-      side,
-    };
-  }
-
-  if (opts.skipDues) {
-    return {
-      action,
-      income: 0,
-      rentPaid: 0,
-      tithe: 0,
-      balance: Math.max(0, opts.balance),
-      hanged: false,
-      leftover: 0,
-      side,
-    };
-  }
 
   if (opts.balance <= 0) {
     return {

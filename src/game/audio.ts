@@ -32,11 +32,6 @@ function beep(freq: number, dur: number, type: OscillatorType, gain = 0.05, slid
   o.stop(t + dur + 0.02);
 }
 
-export function playGive() {
-  beep(660, 0.08, "triangle", 0.04);
-  beep(880, 0.12, "triangle", 0.035);
-}
-
 export function playDawn() {
   beep(392, 0.18, "sine", 0.05);
   beep(523, 0.28, "sine", 0.04);

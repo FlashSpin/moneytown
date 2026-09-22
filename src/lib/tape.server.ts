@@ -1,3 +1,4 @@
+import type { Asset } from "@/game/dawn";
 import type { Tape } from "@/game/types";
 
 type FearPayload = {
@@ -89,19 +90,40 @@ async function coinbaseGbp(): Promise<number | null> {
   }
 }
 
-async function geckoTape(): Promise<{ btcUsd: number; btcGbp: number; change24h: number } | null> {
+type GeckoAsset = { usd: number; change24h: number };
+
+/** One request for BTC (still the economy's primary source elsewhere) plus ETH/SOL for trading. */
+async function geckoTape(): Promise<{
+  btcUsd: number;
+  btcGbp: number;
+  change24h: number;
+  eth: GeckoAsset | null;
+  sol: GeckoAsset | null;
+} | null> {
   try {
     const raw = (await fetchJson(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,gbp&include_24hr_change=true",
-    )) as { bitcoin?: { usd?: number; gbp?: number; usd_24h_change?: number } };
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd,gbp&include_24hr_change=true",
+    )) as {
+      bitcoin?: { usd?: number; gbp?: number; usd_24h_change?: number };
+      ethereum?: { usd?: number; usd_24h_change?: number };
+      solana?: { usd?: number; usd_24h_change?: number };
+    };
     const btcUsd = Number(raw.bitcoin?.usd);
     const btcGbp = Number(raw.bitcoin?.gbp);
     const change24h = Number(raw.bitcoin?.usd_24h_change);
     if (!Number.isFinite(btcUsd) || btcUsd <= 0) return null;
+    const asAsset = (a?: { usd?: number; usd_24h_change?: number }): GeckoAsset | null => {
+      const usd = Number(a?.usd);
+      if (!Number.isFinite(usd) || usd <= 0) return null;
+      const chg = Number(a?.usd_24h_change);
+      return { usd, change24h: Number.isFinite(chg) ? chg : 0 };
+    };
     return {
       btcUsd,
       btcGbp: Number.isFinite(btcGbp) && btcGbp > 0 ? btcGbp : 0,
       change24h: Number.isFinite(change24h) ? change24h : 0,
+      eth: asAsset(raw.ethereum),
+      sol: asAsset(raw.solana),
     };
   } catch {
     return null;
@@ -171,15 +193,24 @@ async function fetchTapeUncached(): Promise<Tape> {
 
   const dark = !(btcUsd > 0);
   const fg = fng?.value ?? 50;
+  const resolvedBtcUsd = dark ? 100_000 : btcUsd;
+  const resolvedChange24h = dark ? 0 : change24h;
+
+  const assets: Record<Asset, { usd: number; change24h: number }> = {
+    BTC: { usd: resolvedBtcUsd, change24h: resolvedChange24h },
+    ETH: gecko?.eth ?? { usd: 0, change24h: 0 },
+    SOL: gecko?.sol ?? { usd: 0, change24h: 0 },
+  };
 
   return {
-    btcUsd: dark ? 100_000 : btcUsd,
+    btcUsd: resolvedBtcUsd,
     btcGbp: dark ? 74_000 : btcGbp || btcUsd / 1.33,
-    change24h: dark ? 0 : change24h,
+    change24h: resolvedChange24h,
     fearGreed: fg,
     fearGreedLabel: fng?.label ?? fngLabel(fg),
     dark,
     source: dark ? "dark" : source,
     fetchedAt: Date.now(),
+    assets,
   };
 }

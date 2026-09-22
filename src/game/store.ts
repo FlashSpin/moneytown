@@ -12,6 +12,8 @@ import { uid } from "./wallets";
 type ViewState = {
   selectedId: string | null;
   loading: boolean;
+  /** True once a real server world has been applied (the placeholder is not one). */
+  synced: boolean;
   error: string | null;
   /** Ambient-chatter cooldown, purely cosmetic and never sent anywhere. */
   talkCd: number;
@@ -37,6 +39,7 @@ export const useGame = create<GameState & ViewState & Actions>((set, get) => ({
   ...freshWorld(0),
   selectedId: null,
   loading: true,
+  synced: false,
   error: null,
   talkCd: 8,
 
@@ -44,9 +47,16 @@ export const useGame = create<GameState & ViewState & Actions>((set, get) => ({
     try {
       const world = await getWorldState();
       const prev = get();
-      if (!prev.loading && world.day > prev.day) playDawn();
-      if (!prev.loading && world.subjects.length > prev.subjects.length) playSpawn();
-      set({ ...world, loading: false, error: null });
+      // Only the daily cron writes the world, so a same-day poll carries
+      // nothing new — applying it would snap every walker back to their
+      // stored spot, replay the day's speech and re-march the condemned.
+      if (prev.synced && world.day === prev.day) {
+        if (prev.error) set({ error: null });
+        return;
+      }
+      if (prev.synced && world.day > prev.day) playDawn();
+      if (prev.synced && world.subjects.length > prev.subjects.length) playSpawn();
+      set({ ...world, loading: false, synced: true, error: null });
     } catch {
       set({ loading: false, error: "Could not reach the parish. Retrying shortly." });
     }

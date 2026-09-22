@@ -561,3 +561,15 @@
   opacity: 0.5;
   cursor: default;
 }
+
+.audience-brain {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: var(--color-moss-deep);
+}
+
+.audience-brain[data-live="no"] {
+  color: var(--color-ink-soft);
+}

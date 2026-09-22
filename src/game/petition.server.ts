@@ -8,7 +8,7 @@
  * The visitor's words stay between them and the King — only the fixed-text
  * summons notice goes into the shared chronicle every visitor sees.
  */
-import { askGrokCounsel } from "@/lib/counsel.server";
+import { askCounsel } from "@/lib/counsel.server";
 import { loadWorldRow, saveWorldIfUnchanged, type WorldRow } from "@/lib/world.server";
 import { LIVING_CAP, PETITIONS_PER_DAY, POI, SUMMONS_PER_DAY, SUMMONS_PER_PETITION } from "./constants";
 import { defaultKingPolicy, petitionSummonCount } from "./economy";
@@ -24,10 +24,14 @@ export type PetitionResult = {
   summoned: string[];
   /** Set when the King wanted souls but the crown's rules held him back. */
   limitNote: string | null;
+  /** Which mind answered: "Claude", "Grok", … or null when no AI was reachable. */
+  brain: string | null;
   world: GameState;
 };
 
-type Decision = { say: string; summon: number };
+type Decision = { say: string; summon: number; brain: string | null };
+
+const BRAIN_LABEL = { claude: "Claude", grok: "Grok", pollinations: "Free online wits" } as const;
 
 function living(state: GameState): Subject[] {
   return state.subjects.filter((x) => x.state !== "condemned" && x.state !== "hanging");
@@ -79,7 +83,7 @@ function parseDecision(text: string): Decision | null {
     const say = String(obj.say ?? "").replace(/\s+/g, " ").trim().slice(0, 320);
     if (!say) return null;
     const summon = Number(obj.summon);
-    return { say, summon: Number.isFinite(summon) ? Math.max(0, Math.floor(summon)) : 0 };
+    return { say, summon: Number.isFinite(summon) ? Math.max(0, Math.floor(summon)) : 0, brain: null };
   } catch {
     return null;
   }
@@ -104,10 +108,10 @@ function requestedCount(message: string): number {
 /** No AI answered — the King still hears a plain request for villagers. */
 function heuristicDecision(message: string, max: number): Decision {
   if (!SUMMON_WORDS.test(message)) {
-    return { say: "The King regards thee in silence. Speak plainly, if thou wouldst have souls summoned.", summon: 0 };
+    return { say: "The King regards thee in silence. Speak plainly, if thou wouldst have souls summoned.", summon: 0, brain: null };
   }
   if (max === 0) {
-    return { say: "Not today. The treasury and the parish rolls allow no more souls until the next dawn.", summon: 0 };
+    return { say: "Not today. The treasury and the parish rolls allow no more souls until the next dawn.", summon: 0, brain: null };
   }
   const asked = requestedCount(message);
   const grant = Math.min(asked, max);
@@ -115,13 +119,14 @@ function heuristicDecision(message: string, max: number): Decision {
     grant === 1
       ? "So be it. Let the gates open and one new soul be staked for trade."
       : `So be it. Let the gates open — ${NUMBER_WORDS[grant] ?? grant} souls shall be staked for trade.`;
-  return { say, summon: asked };
+  return { say, summon: asked, brain: null };
 }
 
 async function decide(state: GameState, history: PetitionTurn[], message: string): Promise<Decision> {
-  const res = await askGrokCounsel(kingPrompt(state, history, message));
+  const res = await askCounsel(kingPrompt(state, history, message));
   const parsed = res.ok ? parseDecision(res.text) : null;
-  return parsed ?? heuristicDecision(message, grantable(state));
+  if (res.ok && parsed) return { ...parsed, brain: BRAIN_LABEL[res.source] };
+  return heuristicDecision(message, grantable(state));
 }
 
 /** Apply a decision to a freshly-read world. Pure apart from the RNG seed. */
@@ -181,6 +186,7 @@ export async function petitionKing(message: string, history: PetitionTurn[]): Pr
       reply: "The King has heard petitions enough for one day. Return after the next dawn.",
       summoned: [],
       limitNote: null,
+      brain: null,
       world: row.state,
     };
   }
@@ -194,13 +200,14 @@ export async function petitionKing(message: string, history: PetitionTurn[]): Pr
     if (attempt > 0) row = await loadWorldRow();
     const { next, summoned, limitNote } = applyDecision(row, decision);
     if (await saveWorldIfUnchanged(next, row.rev)) {
-      return { reply: decision.say, summoned, limitNote, world: next };
+      return { reply: decision.say, summoned, limitNote, brain: decision.brain, world: next };
     }
   }
   return {
     reply: decision.say,
     summoned: [],
     limitNote: "The court was too crowded to record thy petition. Try again.",
+    brain: decision.brain,
     world: row.state,
   };
 }

@@ -5,7 +5,7 @@ export type KingAction = "hold";
 export type WalkDir = "down" | "left" | "right" | "up";
 export type AgentState = "idle" | "walk" | "work" | "condemned" | "hanging";
 export type BodySheet = "king" | "man" | "woman";
-export type BrainKind = "grok" | "pollinations" | "heuristic";
+export type BrainKind = "claude" | "grok" | "pollinations" | "heuristic";
 
 export type BrainInfo = { kind: BrainKind; label: string };
 

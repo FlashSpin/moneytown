@@ -16,6 +16,8 @@ export type AudienceLine = { id: string; from: "you" | "king" | "note"; text: st
 type ViewState = {
   audience: AudienceLine[];
   petitioning: boolean;
+  /** Which AI answered the last petition; null = none reachable (stock replies); undefined = not asked yet. */
+  kingBrain: string | null | undefined;
   selectedId: string | null;
   loading: boolean;
   /** True once a real server world has been applied (the placeholder is not one). */
@@ -81,6 +83,7 @@ export const useGame = create<Store>((set, get) => ({
   ...freshWorld(0),
   audience: [],
   petitioning: false,
+  kingBrain: undefined,
   selectedId: null,
   loading: true,
   synced: false,
@@ -117,7 +120,7 @@ export const useGame = create<Store>((set, get) => ({
       const notes: AudienceLine[] = [];
       if (res.summoned.length) notes.push(line("note", `Summoned: ${res.summoned.join(", ")}.`));
       if (res.limitNote) notes.push(line("note", res.limitNote));
-      set({ audience: [...get().audience, line("king", res.reply), ...notes].slice(-30) });
+      set({ audience: [...get().audience, line("king", res.reply), ...notes].slice(-30), kingBrain: res.brain });
       // The King says it aloud in the square, too — replacing whatever he
       // was still saying, so two royal bubbles never stack.
       const speech = get().speech.filter((l) => l.fromId !== "king" && l.toId !== "king");

@@ -11,6 +11,7 @@ export function KingAudience() {
   const petitioning = useGame((s) => s.petitioning);
   const petition = useGame((s) => s.petition);
   const day = useGame((s) => s.day);
+  const kingBrain = useGame((s) => s.kingBrain);
   const summonedToday = useGame((s) => (s.petitions?.day === s.day ? s.petitions.summoned : 0));
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLOListElement>(null);
@@ -62,6 +63,12 @@ export function KingAudience() {
           ))}
         </div>
       )}
+
+      {kingBrain !== undefined ? (
+        <p className="audience-brain" data-live={kingBrain ? "yes" : "no"}>
+          {kingBrain ? `The King's mind: ${kingBrain}` : "No AI reachable — the King is using stock replies."}
+        </p>
+      ) : null}
 
       <form
         className="audience-form"

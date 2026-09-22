@@ -175,6 +175,14 @@ export default defineConfig(({ command, isPreview }) => ({
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
             serverDir: "./server",
+            // The preset writes its own .vercel/output/config.json, which is
+            // what a Build Output deploy reads — so the daily tick cron has to
+            // be declared here too, not only in vercel.json. Vercel Cron calls
+            // it with GET + `Authorization: Bearer $CRON_SECRET`; /api/tick's
+            // 20-hour guard makes a duplicate registration harmless.
+            vercel: {
+              config: { crons: [{ path: "/api/tick", schedule: "0 6 * * *" }] },
+            },
           }),
         ]
       : []),

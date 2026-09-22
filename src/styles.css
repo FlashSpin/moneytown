@@ -288,7 +288,8 @@
 }
 
 .log {
-  flex: 1;
+  /* Grow to fill, but never shrink below the entries — the sidebar scrolls. */
+  flex: 1 0 auto;
   min-height: 120px;
 }
 

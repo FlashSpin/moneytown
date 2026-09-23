@@ -22,11 +22,18 @@ export async function askCounsel(prompt: string): Promise<
   if (gemini) return { ok: true, text: gemini, source: "gemini" };
   const groq = await tryGroq(prompt);
   if (groq) return { ok: true, text: groq, source: "groq" };
-  const claude = await tryClaude(prompt);
-  if (claude) return { ok: true, text: claude, source: "claude" };
-  const grok = await tryGrok(prompt);
-  if (grok) return { ok: true, text: grok, source: "grok" };
+  if (key("ANTHROPIC_API_KEY")) {
+    const claude = await tryClaude(prompt);
+    lastResult.set("claude", claude ? "ok" : "failed (see server log)");
+    if (claude) return { ok: true, text: claude, source: "claude" };
+  }
+  if (key("XAI_API_KEY")) {
+    const grok = await tryGrok(prompt);
+    lastResult.set("grok", grok ? "ok" : "failed");
+    if (grok) return { ok: true, text: grok, source: "grok" };
+  }
   const poll = await tryPollinations(prompt);
+  lastResult.set("pollinations", poll ? "ok" : "failed");
   if (poll) return { ok: true, text: poll, source: "pollinations" };
   return { ok: false, error: "AI is not available" };
 }
@@ -35,44 +42,102 @@ function key(name: string): string | null {
   return process.env[name]?.trim() || null;
 }
 
+/** What happened on each provider's latest attempt in this server instance — shown to the seal-bearer. */
+export type ProviderReport = { provider: CounselSource; configured: boolean; last: string | null };
+const lastResult = new Map<CounselSource, string>();
+
+export function counselDiagnostics(): ProviderReport[] {
+  const configured: Record<CounselSource, boolean> = {
+    gemini: Boolean(key("GEMINI_API_KEY")),
+    groq: Boolean(key("GROQ_API_KEY")),
+    claude: Boolean(key("ANTHROPIC_API_KEY")),
+    grok: Boolean(key("XAI_API_KEY")),
+    pollinations: true,
+  };
+  return (Object.keys(configured) as CounselSource[]).map((provider) => ({
+    provider,
+    configured: configured[provider],
+    last: lastResult.get(provider) ?? null,
+  }));
+}
+
+/** A short, key-free description of a failed HTTP call, from the provider's own error message. */
+async function describeFailure(res: Response): Promise<string> {
+  let detail = "";
+  try {
+    const body = (await res.json()) as { error?: { message?: string } | string; message?: string };
+    detail = typeof body.error === "string" ? body.error : (body.error?.message ?? body.message ?? "");
+  } catch {
+    // Not JSON — the status alone will do.
+  }
+  detail = detail.replace(/\s+/g, " ").trim().slice(0, 160);
+  return `HTTP ${res.status}${detail ? `: ${detail}` : ""}`;
+}
+
+/** Tried in order when the one before is unknown to the API (404) — model names move fast. */
+const GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"];
+
 /** Google Gemini, free tier via an AI Studio key. GEMINI_MODEL overrides the model. */
 async function tryGemini(prompt: string): Promise<string | null> {
   const apiKey = key("GEMINI_API_KEY");
   if (!apiKey) return null;
-  const model = key("GEMINI_MODEL") ?? "gemini-3.1-flash-lite";
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM }] },
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.8, maxOutputTokens: 2048, responseMimeType: "application/json" },
-        }),
-        signal: AbortSignal.timeout(20_000),
-      },
-    );
-    if (!res.ok) {
-      // 429 = the free daily/minute quota is spent; the cascade moves on.
-      console.warn(`[counsel] Gemini HTTP ${res.status} — falling back.`);
+  const override = key("GEMINI_MODEL");
+  for (const model of override ? [override] : GEMINI_MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM }] },
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.8,
+              // Gemini counts its thinking against this, so leave room for the reply too.
+              maxOutputTokens: 8192,
+              responseMimeType: "application/json",
+              // Gemini 3 models take a thinking level; keep it low for quick answers.
+              ...(model.startsWith("gemini-3") ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+            },
+          }),
+          signal: AbortSignal.timeout(25_000),
+        },
+      );
+      if (!res.ok) {
+        // 429 = the free daily/minute quota is spent; 404 = model unknown → try the next one.
+        lastResult.set("gemini", `${model}: ${await describeFailure(res)}`);
+        console.warn(`[counsel] Gemini ${model} ${lastResult.get("gemini")} — falling back.`);
+        if (res.status === 404 && !override) continue;
+        return null;
+      }
+      const body = (await res.json()) as {
+        candidates?: { finishReason?: string; content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+        promptFeedback?: { blockReason?: string };
+      };
+      const text = (body.candidates?.[0]?.content?.parts ?? [])
+        .filter((p) => !p.thought)
+        .map((p) => p.text ?? "")
+        .join("")
+        .trim();
+      if (!text) {
+        const why = body.promptFeedback?.blockReason ?? body.candidates?.[0]?.finishReason ?? "no candidates";
+        lastResult.set("gemini", `${model}: empty reply (${why})`);
+        return null;
+      }
+      lastResult.set("gemini", `${model}: ok`);
+      return text;
+    } catch (error) {
+      const why = error instanceof Error && error.name === "TimeoutError" ? "timed out" : "unreachable";
+      lastResult.set("gemini", `${model}: ${why}`);
+      console.warn(`[counsel] Gemini ${model} ${why} — falling back.`);
       return null;
     }
-    const body = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
-    };
-    const text = (body.candidates?.[0]?.content?.parts ?? [])
-      .filter((p) => !p.thought)
-      .map((p) => p.text ?? "")
-      .join("")
-      .trim();
-    return text || null;
-  } catch {
-    console.warn("[counsel] Gemini unreachable — falling back.");
-    return null;
   }
+  return null;
 }
+
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
 /**
  * Groq, free tier. OpenAI-style endpoint; no response_format because Groq's
@@ -82,34 +147,45 @@ async function tryGemini(prompt: string): Promise<string | null> {
 async function tryGroq(prompt: string): Promise<string | null> {
   const apiKey = key("GROQ_API_KEY");
   if (!apiKey) return null;
-  const model = key("GROQ_MODEL") ?? "openai/gpt-oss-120b";
-  try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        temperature: 0.8,
-        max_completion_tokens: 2048,
-        reasoning_effort: "low",
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: prompt },
-        ],
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) {
-      console.warn(`[counsel] Groq HTTP ${res.status} — falling back.`);
+  const override = key("GROQ_MODEL");
+  for (const model of override ? [override] : GROQ_MODELS) {
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          temperature: 0.8,
+          max_completion_tokens: 4096,
+          messages: [
+            { role: "system", content: SYSTEM },
+            { role: "user", content: prompt },
+          ],
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (!res.ok) {
+        lastResult.set("groq", `${model}: ${await describeFailure(res)}`);
+        console.warn(`[counsel] Groq ${model} ${lastResult.get("groq")} — falling back.`);
+        if (res.status === 404 && !override) continue;
+        return null;
+      }
+      const body = (await res.json()) as { choices?: { finish_reason?: string; message?: { content?: string } }[] };
+      const text = body.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!text) {
+        lastResult.set("groq", `${model}: empty reply (${body.choices?.[0]?.finish_reason ?? "no choices"})`);
+        return null;
+      }
+      lastResult.set("groq", `${model}: ok`);
+      return text;
+    } catch (error) {
+      const why = error instanceof Error && error.name === "TimeoutError" ? "timed out" : "unreachable";
+      lastResult.set("groq", `${model}: ${why}`);
+      console.warn(`[counsel] Groq ${model} ${why} — falling back.`);
       return null;
     }
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const text = body.choices?.[0]?.message?.content?.trim() ?? "";
-    return text || null;
-  } catch {
-    console.warn("[counsel] Groq unreachable — falling back.");
-    return null;
   }
+  return null;
 }
 
 let claudeClient: Anthropic | null = null;

@@ -634,3 +634,23 @@
   font-size: 0.76rem;
   color: var(--color-crimson);
 }
+
+.ai-report {
+  font-size: 0.74rem;
+  color: var(--color-ink-soft);
+}
+
+.ai-report summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.ai-report ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  word-break: break-word;
+}

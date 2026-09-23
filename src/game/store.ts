@@ -22,6 +22,8 @@ type ViewState = {
   seal: string | null;
   /** True once the server has accepted `seal`. */
   sovereign: boolean;
+  /** Seal-bearer only: how each AI provider fared on the last petition. */
+  diagnostics: { provider: string; configured: boolean; last: string | null }[] | null;
   selectedId: string | null;
   loading: boolean;
   /** True once a real server world has been applied (the placeholder is not one). */
@@ -127,6 +129,7 @@ export const useGame = create<Store>((set, get) => ({
   kingBrain: undefined,
   seal: null,
   sovereign: false,
+  diagnostics: null,
   selectedId: null,
   loading: true,
   synced: false,
@@ -170,7 +173,11 @@ export const useGame = create<Store>((set, get) => ({
         writeSeal(null);
         set({ seal: null, sovereign: false });
       }
-      set({ audience: [...get().audience, line("king", res.reply), ...notes].slice(-30), kingBrain: res.brain });
+      set({
+        audience: [...get().audience, line("king", res.reply), ...notes].slice(-30),
+        kingBrain: res.brain,
+        diagnostics: res.diagnostics ?? null,
+      });
       // The King says it aloud in the square, too — replacing whatever he
       // was still saying, so two royal bubbles never stack.
       const speech = get().speech.filter((l) => l.fromId !== "king" && l.toId !== "king");
@@ -209,7 +216,7 @@ export const useGame = create<Store>((set, get) => ({
 
   forgetSeal: () => {
     writeSeal(null);
-    set({ seal: null, sovereign: false });
+    set({ seal: null, sovereign: false, diagnostics: null });
   },
 
   restoreSeal: async () => {

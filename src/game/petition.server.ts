@@ -13,7 +13,7 @@
  * The visitor's words stay between them and the King — only fixed-text
  * notices go into the shared chronicle every visitor sees.
  */
-import { askCounsel } from "@/lib/counsel.server";
+import { askCounsel, counselDiagnostics, type ProviderReport } from "@/lib/counsel.server";
 import { loadWorldRow, saveWorldIfUnchanged, type WorldRow } from "@/lib/world.server";
 import {
   LIVING_CAP,
@@ -46,6 +46,8 @@ export type PetitionResult = {
   /** Which mind answered: "Gemini (free)", … or null when no AI was reachable. */
   brain: string | null;
   sovereign: boolean;
+  /** For the seal-bearer only: which AI providers are configured and how each last fared. */
+  diagnostics?: ProviderReport[];
   world: GameState;
 };
 
@@ -368,7 +370,14 @@ export async function petitionKing(message: string, history: PetitionTurn[], sov
     const applied = applyDecision(row, decision, sovereign);
     if (await saveWorldIfUnchanged(applied.next, row.rev)) {
       const { next, ...rest } = applied;
-      return { reply: decision.say, ...rest, brain: decision.brain, sovereign, world: next };
+      return {
+        reply: decision.say,
+        ...rest,
+        brain: decision.brain,
+        sovereign,
+        diagnostics: sovereign ? counselDiagnostics() : undefined,
+        world: next,
+      };
     }
   }
   return {

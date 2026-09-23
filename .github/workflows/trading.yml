@@ -1,6 +1,7 @@
 # Every 5 minutes, the villagers trade: /api/trade runs each villager's own
-# strategy against live prices (no AI — the strategies are chosen at the
-# council, every 4 hours). Free on GitHub Actions for public repositories.
+# strategy across every coin at live prices and, when the villagers asked to
+# look again (every 5-60 minutes), the trading desk lets them place their own
+# trades with the free AI — which can take a minute, hence the long timeout. Free on GitHub Actions for public repositories.
 # Uses the same CRON_SECRET repository secret as the King's review.
 # GitHub may delay or skip scheduled runs when it is busy; the game copes.
 name: Villagers trade
@@ -15,7 +16,7 @@ permissions: {}
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Let the villagers trade
         env:
@@ -26,6 +27,6 @@ jobs:
             echo "::error::Add the CRON_SECRET repository secret (same value as in Vercel)."
             exit 1
           fi
-          curl --fail-with-body --silent --show-error --max-time 60 \
+          curl --fail-with-body --silent --show-error --max-time 150 \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$SITE_URL/api/trade"

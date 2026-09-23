@@ -11,10 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BacktestRouteImport } from './routes/backtest'
+import { Route as PaperRouteImport } from './routes/paper'
 import { Route as ApiBacktestRouteImport } from './routes/api/backtest'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiHeartbeatRouteImport } from './routes/api/heartbeat'
 import { Route as ApiLedgerRouteImport } from './routes/api/ledger'
+import { Route as ApiPaperRouteImport } from './routes/api/paper'
 import { Route as ApiReviewRouteImport } from './routes/api/review'
 import { Route as ApiTickRouteImport } from './routes/api/tick'
 import { Route as ApiTradeRouteImport } from './routes/api/trade'
@@ -27,6 +29,11 @@ const IndexRoute = IndexRouteImport.update({
 const BacktestRoute = BacktestRouteImport.update({
   id: '/backtest',
   path: '/backtest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaperRoute = PaperRouteImport.update({
+  id: '/paper',
+  path: '/paper',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiBacktestRoute = ApiBacktestRouteImport.update({
@@ -49,6 +56,11 @@ const ApiLedgerRoute = ApiLedgerRouteImport.update({
   path: '/api/ledger',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPaperRoute = ApiPaperRouteImport.update({
+  id: '/api/paper',
+  path: '/api/paper',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiReviewRoute = ApiReviewRouteImport.update({
   id: '/api/review',
   path: '/api/review',
@@ -68,10 +80,12 @@ const ApiTradeRoute = ApiTradeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/backtest': typeof BacktestRoute
+  '/paper': typeof PaperRoute
   '/api/backtest': typeof ApiBacktestRoute
   '/api/health': typeof ApiHealthRoute
   '/api/heartbeat': typeof ApiHeartbeatRoute
   '/api/ledger': typeof ApiLedgerRoute
+  '/api/paper': typeof ApiPaperRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
   '/api/trade': typeof ApiTradeRoute
@@ -79,10 +93,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/backtest': typeof BacktestRoute
+  '/paper': typeof PaperRoute
   '/api/backtest': typeof ApiBacktestRoute
   '/api/health': typeof ApiHealthRoute
   '/api/heartbeat': typeof ApiHeartbeatRoute
   '/api/ledger': typeof ApiLedgerRoute
+  '/api/paper': typeof ApiPaperRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
   '/api/trade': typeof ApiTradeRoute
@@ -91,10 +107,12 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/backtest': typeof BacktestRoute
+  '/paper': typeof PaperRoute
   '/api/backtest': typeof ApiBacktestRoute
   '/api/health': typeof ApiHealthRoute
   '/api/heartbeat': typeof ApiHeartbeatRoute
   '/api/ledger': typeof ApiLedgerRoute
+  '/api/paper': typeof ApiPaperRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
   '/api/trade': typeof ApiTradeRoute
@@ -104,10 +122,12 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/backtest'
+    | '/paper'
     | '/api/backtest'
     | '/api/health'
     | '/api/heartbeat'
     | '/api/ledger'
+    | '/api/paper'
     | '/api/review'
     | '/api/tick'
     | '/api/trade'
@@ -115,10 +135,12 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/backtest'
+    | '/paper'
     | '/api/backtest'
     | '/api/health'
     | '/api/heartbeat'
     | '/api/ledger'
+    | '/api/paper'
     | '/api/review'
     | '/api/tick'
     | '/api/trade'
@@ -126,10 +148,12 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/backtest'
+    | '/paper'
     | '/api/backtest'
     | '/api/health'
     | '/api/heartbeat'
     | '/api/ledger'
+    | '/api/paper'
     | '/api/review'
     | '/api/tick'
     | '/api/trade'
@@ -138,10 +162,12 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BacktestRoute: typeof BacktestRoute
+  PaperRoute: typeof PaperRoute
   ApiBacktestRoute: typeof ApiBacktestRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiHeartbeatRoute: typeof ApiHeartbeatRoute
   ApiLedgerRoute: typeof ApiLedgerRoute
+  ApiPaperRoute: typeof ApiPaperRoute
   ApiReviewRoute: typeof ApiReviewRoute
   ApiTickRoute: typeof ApiTickRoute
   ApiTradeRoute: typeof ApiTradeRoute
@@ -161,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/backtest'
       fullPath: '/backtest'
       preLoaderRoute: typeof BacktestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/paper': {
+      id: '/paper'
+      path: '/paper'
+      fullPath: '/paper'
+      preLoaderRoute: typeof PaperRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/backtest': {
@@ -191,6 +224,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiLedgerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/paper': {
+      id: '/api/paper'
+      path: '/api/paper'
+      fullPath: '/api/paper'
+      preLoaderRoute: typeof ApiPaperRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/review': {
       id: '/api/review'
       path: '/api/review'
@@ -218,10 +258,12 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BacktestRoute: BacktestRoute,
+  PaperRoute: PaperRoute,
   ApiBacktestRoute: ApiBacktestRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiHeartbeatRoute: ApiHeartbeatRoute,
   ApiLedgerRoute: ApiLedgerRoute,
+  ApiPaperRoute: ApiPaperRoute,
   ApiReviewRoute: ApiReviewRoute,
   ApiTickRoute: ApiTickRoute,
   ApiTradeRoute: ApiTradeRoute,

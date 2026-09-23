@@ -84,6 +84,8 @@ export type Metrics = {
   costs: number;
   /** Share of bars with a trade open. */
   exposure: number;
+  /** Fee, spread and slippage per fill, as a share of the stake (absent on older runs). */
+  costPerFillPct?: number | null;
 };
 
 export type RunResult = { metrics: Metrics; equity: number[]; events: TradeEvent[] };
@@ -209,6 +211,10 @@ export function measure(equity: number[], events: TradeEvent[], start: number, e
     fees: events.reduce((n, e) => n + (e.fee ?? 0), 0),
     costs: events.reduce((n, e) => n + (e.cost ?? 0), 0),
     exposure: bars > 0 ? inMarket / bars : 0,
+    costPerFillPct: (() => {
+      const fills = events.filter((e) => e.stake && e.stake > 0);
+      return fills.length ? fills.reduce((n, e) => n + ((e.fee ?? 0) + (e.cost ?? 0)) / e.stake!, 0) / fills.length : null;
+    })(),
   };
 }
 

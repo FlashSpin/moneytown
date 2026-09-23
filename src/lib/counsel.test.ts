@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { askCounsel, counselDiagnostics } from "./counsel.server.ts";
+import { askCounsel, counselDiagnostics, GEMINI_MODELS } from "./counsel.server.ts";
 
 type Call = { url: string; init: RequestInit };
 const realFetch = globalThis.fetch;
@@ -36,7 +36,8 @@ describe("the King's AI cascade", () => {
     const res = await askCounsel("prompt");
     assert.deepEqual(res, { ok: true, text: '{"say":"Hark"}', source: "gemini" });
     assert.equal(calls.length, 1);
-    assert.match(calls[0]!.url, /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3\.1-flash-lite:generateContent$/);
+    assert.equal(calls[0]!.url, `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODELS[0]}:generateContent`);
+    assert.match(GEMINI_MODELS[0]!, /flash-lite/);
     assert.equal((calls[0]!.init.headers as Record<string, string>)["x-goog-api-key"], "g-key");
     const body = JSON.parse(String(calls[0]!.init.body));
     assert.equal(body.generationConfig.responseMimeType, "application/json");
@@ -49,8 +50,9 @@ describe("the King's AI cascade", () => {
     mockFetch((url) => (url.includes("googleapis") ? json({ error: "quota" }, 429) : groqReply('{"say":"Aye"}')));
     const res = await askCounsel("prompt");
     assert.deepEqual(res, { ok: true, text: '{"say":"Aye"}', source: "groq" });
-    assert.equal(calls.filter((c) => c.url.includes("googleapis")).length, 4, "each Gemini model has its own quota");
-    const groq = calls[4]!;
+    const n = GEMINI_MODELS.length;
+    assert.equal(calls.filter((c) => c.url.includes("googleapis")).length, n, "each Gemini model has its own quota");
+    const groq = calls[n]!;
     assert.equal(groq.url, "https://api.groq.com/openai/v1/chat/completions");
     assert.equal((groq.init.headers as Record<string, string>).Authorization, "Bearer q-key");
     assert.equal(JSON.parse(String(groq.init.body)).model, "openai/gpt-oss-120b");
@@ -63,25 +65,28 @@ describe("the King's AI cascade", () => {
     );
     const res = await askCounsel("prompt");
     assert.equal(res.ok && res.source, "gemini");
-    assert.match(calls[3]!.url, /models\/gemini-2\.5-flash-lite:generateContent$/);
+    const last = GEMINI_MODELS.length - 1;
+    assert.match(calls[last]!.url, /models\/gemini-2\.5-flash-lite:generateContent$/);
     // Gemini 2.5 takes no thinkingLevel; Gemini 3 does.
     assert.equal(JSON.parse(String(calls[0]!.init.body)).generationConfig.thinkingConfig.thinkingLevel, "low");
-    assert.equal(JSON.parse(String(calls[3]!.init.body)).generationConfig.thinkingConfig, undefined);
+    assert.equal(JSON.parse(String(calls[last]!.init.body)).generationConfig.thinkingConfig, undefined);
+    // The diagnostics show every model tried, not just the last.
+    assert.match(counselDiagnostics().find((d) => d.provider === "gemini")!.last!, /gemini-3\.5-flash-lite: HTTP 404.*gemini-2\.5-flash-lite: ok/);
   });
 
   it("tries the next Gemini model when one is overloaded (503) or out of quota (429)", async () => {
     process.env.GEMINI_API_KEY = "g-key";
     mockFetch((url) =>
-      url.includes("gemini-3.1-flash-lite")
+      url.includes(`/${GEMINI_MODELS[0]}:`)
         ? json({ error: { message: "high demand" } }, 503)
-        : url.includes("gemini-3.6-flash-lite")
+        : url.includes(`/${GEMINI_MODELS[1]}:`)
           ? json({ error: { message: "quota" } }, 429)
           : geminiReply('{"say":"Hark"}'),
     );
     const res = await askCounsel("prompt");
     assert.equal(res.ok && res.source, "gemini");
     assert.equal(calls.length, 3);
-    assert.match(calls[2]!.url, /models\/gemini-3\.6-flash:generateContent$/);
+    assert.ok(calls[2]!.url.includes(`/${GEMINI_MODELS[2]}:generateContent`));
   });
 
   it("stops at a bad key rather than trying every model", async () => {
@@ -105,7 +110,7 @@ describe("the King's AI cascade", () => {
     const res = await askCounsel("prompt");
     assert.equal(res.ok, false);
     const report = Object.fromEntries(counselDiagnostics().map((r) => [r.provider, r]));
-    assert.equal(report.gemini!.last, "gemini-3.1-flash-lite: HTTP 400: API key not valid. Please pass a valid API key.");
+    assert.equal(report.gemini!.last, `${GEMINI_MODELS[0]}: HTTP 400: API key not valid. Please pass a valid API key.`);
     assert.equal(report.groq!.last, "openai/gpt-oss-120b: empty reply (length)");
     assert.equal(report.pollinations!.last, "failed");
     assert.equal(report.claude!.configured, false);

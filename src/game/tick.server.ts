@@ -17,6 +17,7 @@ import { kingFlavor } from "./brains";
 import { priceOf } from "./dawn";
 import { councilStrategies, isLiving, wealthLine } from "./review.server";
 import { Journal, KING, MARKET, villagerAccount, withPostings } from "./ledger";
+import { strategyChanges } from "./paper";
 import { advanceSeason, checkMilestones, parishWealth, SEASONS_KEPT, type DawnBook } from "./progress";
 import { unrealized } from "./strategies";
 import { coinsNeeded } from "./trade.server";
@@ -179,6 +180,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     season: seasonStep.season,
     seasons,
     lastDawn: book,
+    strategyChanges: [...(prev.strategyChanges ?? []), ...strategyChanges(settled, review.subjects, "the dawn council", day, now)],
     seed: prev.seed + 17,
     brain,
     speech: review.speech,
@@ -221,5 +223,6 @@ export async function runReview(prev: GameState): Promise<GameState> {
     speechAt: now,
     council: review.record,
     lastReviewAt: now,
+    strategyChanges: [...(prev.strategyChanges ?? []), ...strategyChanges(prev.subjects, review.subjects, "the strategy council", prev.day, now)],
   });
 }

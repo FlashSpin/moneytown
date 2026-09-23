@@ -15,6 +15,7 @@ import { runTradeTick } from "@/game/trade.server";
 import { acceptedPrices, recordPrices } from "./history.server";
 import { recordRun } from "./jobs.server";
 import { log } from "./log.server";
+import { fillNextPrices } from "./paper.server";
 import { loadWorldAndLedger, saveWorldIfUnchanged } from "./world.server";
 
 export type TradeRunResult = { status: number; body: Record<string, unknown> };
@@ -49,9 +50,11 @@ export async function runTradeOnce(opts: { forced: boolean; minGapMs: number; re
               ...(next.desk.error ? { why: next.desk.error } : {}),
             }
           : null;
-      // Keep the accepted prices for backtesting; a failure here never fails the tick.
-      await recordPrices(next.lastTickAt ?? Date.now(), acceptedPrices(next.ticks, next.lastTickAt ?? 0)).catch((e: unknown) =>
-        log("warn", "trade.history_not_recorded", { requestId: opts.requestId, error: e instanceof Error ? e.message : String(e) }),
+      // Keep the accepted prices for backtesting, and as the next-tick price of the last tick's orders;
+      // a failure here never fails the tick.
+      const accepted = acceptedPrices(next.ticks, next.lastTickAt ?? 0);
+      await Promise.all([recordPrices(next.lastTickAt ?? Date.now(), accepted), fillNextPrices(next.lastTickAt ?? Date.now(), accepted)]).catch(
+        (e: unknown) => log("warn", "trade.history_not_recorded", { requestId: opts.requestId, error: e instanceof Error ? e.message : String(e) }),
       );
       const check = next.ledger?.check;
       const books = check ? (check.ok ? "balanced" : { mismatched: check.diffs.length, total: check.total }) : "opening";

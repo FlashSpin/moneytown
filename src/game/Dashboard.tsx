@@ -4,6 +4,7 @@ import {
   BookOpenCheck,
   CheckCircle2,
   ChevronRight,
+  ClipboardCheck,
   Coins,
   Crown,
   Landmark,
@@ -253,6 +254,9 @@ export function KeyActions() {
       </button>
       <a className="btn" href="/backtest">
         <LineChart size={16} aria-hidden /> Backtests
+      </a>
+      <a className="btn" href="/paper">
+        <ClipboardCheck size={16} aria-hidden /> Paper trading
       </a>
       <button type="button" className="btn" onClick={() => setGuide(true)}>
         <BookOpenCheck size={16} aria-hidden /> How it works

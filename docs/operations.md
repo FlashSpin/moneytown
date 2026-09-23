@@ -85,6 +85,8 @@ migrations only ever add tables, columns and indexes, so rolling the code back i
 | `job_runs` | 30 days | dawn |
 | `ledger_entries` | forever (append-only; ~400 rows a day at full trading) | — |
 | `backtest_runs` | forever (a few per week) | — |
+| `paper_orders` | 1 year | dawn |
+| `strategy_changes` | forever (a few per review) | — |
 | trading floor / chronicle in the world | last 60 fills / 80 entries | every save |
 
 ## Performance notes
@@ -155,3 +157,30 @@ Dependabot alerts in the repository settings as well.
 This is a paper-trading game. A real exchange connection would need its own review first — see
 `docs/real-money-kraken.md`: a key with trade-only permission (**never withdrawal**), an IP allow-list,
 kept only on the server, and separate from the game.
+
+## Paper trading and the gates before real money
+
+Every order the villagers send — filled or rejected by the (simulated) exchange — is stored in
+`paper_orders` with the price expected, the price filled, costs, P&L and the price one tick later; every
+change of strategy is stored in `strategy_changes` with who made it (the dawn council, a review, a royal
+decree). Both are written in the same statement as the world.
+
+`/paper` (and `GET /api/paper`) shows paper results for the whole parish and per strategy (trades a day,
+win rate, P&L, cost per fill, fill against the expected price, rejections, follow-through), where they
+differ from the latest backtest (pace, cost per fill, win rate — once a strategy has 10 closed trades), the
+recent orders and the strategy change log.
+
+It also runs the gates before any real money. **All** must pass, and even then it is a person's decision —
+nothing switches automatically:
+
+1. The schedule runs reliably — 95% of expected trading ticks over 7 days.
+2. The books always reconcile — no ledger mismatch in 30 days.
+3. Risk controls enforced on the server.
+4. Realistic execution.
+5. A strategy survives unseen data — the latest backtest shows one making money on the hold-out and in
+   walk-forward, with 10+ trades.
+6. 30 days of profitable paper trading, with the worst drawdown under 20% of the parish.
+7. Paper trading matches the backtest — enough trades, and no unexplained differences.
+8. Security review, 9. monitoring and alerts, 10. legal and regulatory assessment — signed off by the owner
+   setting `READINESS_SECURITY_REVIEW`, `READINESS_MONITORING` and `READINESS_LEGAL` (e.g. a date and a name)
+   in Vercel. Set them only once the work is actually done.

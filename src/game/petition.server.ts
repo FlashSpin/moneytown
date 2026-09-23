@@ -28,6 +28,7 @@ import {
 import { priceOf, scanCoins } from "./dawn";
 import { describeKnowledge } from "./knowledge";
 import { Journal, KING, villagerAccount, withPostings } from "./ledger";
+import { strategyChanges } from "./paper";
 import { cleanStrategy, coinsLabel, defaultStrategy, STRATEGY_KINDS, unrealized } from "./strategies";
 import { formatCoinPrice } from "@/lib/market";
 import { temperOf } from "./trading";
@@ -456,6 +457,10 @@ function applyDecision(row: WorldRow, decision: Decision, sovereign: boolean) {
     king: { ...state.king, balance: kingBalance, favorAsset },
     decree,
     halt,
+    strategyChanges: [
+      ...(state.strategyChanges ?? []),
+      ...strategyChanges(state.subjects, subjects, sovereign ? "royal decree" : "petition", state.day, Date.now()),
+    ],
     // The seal-bearer's summons don't eat into the visitors' daily allowance.
     petitions: { day: state.day, count: today.count + 1, summoned: today.summoned + (sovereign ? 0 : count) },
   });
@@ -493,7 +498,7 @@ export async function petitionKing(message: string, history: PetitionTurn[], sov
         brain: decision.brain,
         sovereign,
         diagnostics: sovereign ? counselDiagnostics() : undefined,
-        world: { ...next, postings: undefined, ticks: undefined },
+        world: { ...next, postings: undefined, ticks: undefined, paperOrders: undefined, strategyChanges: undefined },
       };
     }
   }

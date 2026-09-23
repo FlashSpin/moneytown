@@ -16,6 +16,7 @@ import { haltReason, riskBook, type Gate } from "./limits";
 import { standAt } from "./shops";
 import { marketExecutor } from "./execution";
 import { addLesson } from "./knowledge";
+import { ordersFrom, type PaperOrder } from "./paper";
 import { checkMilestones } from "./progress";
 import { RANK_INFO, rankChange, rankOf } from "./ranks";
 import { Journal, withPostings } from "./ledger";
@@ -95,6 +96,7 @@ export function tradeParish(
   speech: SpeechLine[];
   skipped: number;
   notes: { kind: "subject" | "tape"; text: string }[];
+  rejects: Parameters<typeof ordersFrom>[1];
   risk: NonNullable<GameState["risk"]>;
 } {
   const market = marketCoins(tape);
@@ -104,6 +106,7 @@ export function tradeParish(
   const universe = tradableCoins(tape);
   const hot = new Set(tape.trending ?? []);
   let skipped = 0;
+  const rejects: Parameters<typeof ordersFrom>[1] = [];
   const paused = new Set(state.decree?.paused ?? []);
   const notes: { kind: "subject" | "tape"; text: string }[] = [];
   const stake = stakeSats(tape);
@@ -143,6 +146,7 @@ export function tradeParish(
     const own = order ? deskStep(me, order, px, now, stake, counted, exec) : null;
     if (own?.skipped) skipped++;
     if (own?.skipped?.startsWith("rejected")) book.block(own.skipped);
+    if (own?.rejectedOrder) rejects.push({ villagerId: s.id, name: s.firstName, order: own.rejectedOrder, expected: priceOf(tape, own.rejectedOrder.coin) });
     const step = own?.events.length
       ? { trader: own.trader, fills: own.events }
       : (() => {
@@ -157,6 +161,7 @@ export function tradeParish(
             : counted;
           const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, kindGate, exec);
           if (r.rejected) book.block(r.rejected);
+          if (r.rejectedOrder) rejects.push({ villagerId: s.id, name: s.firstName, order: r.rejectedOrder, expected: priceOf(tape, r.rejectedOrder.coin) });
           return { trader: r.trader, fills: r.event ? [r.event] : [] };
         })();
     const trader = step.trader;
@@ -226,6 +231,7 @@ export function tradeParish(
     speech: speech.slice(0, 8),
     skipped,
     notes,
+    rejects,
     risk: { at: now, blocked: book.blocked, ...(book.pausedToday ? { pausedToday: book.pausedToday } : {}) },
   };
 }
@@ -275,7 +281,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
   }
   const answer = due ? memo.desk : undefined;
   const desk = answer && !("error" in answer) ? answer : null;
-  const { subjects, events, speech, skipped, risk, notes } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
+  const { subjects, events, speech, skipped, risk, notes, rejects } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
   const journal = new Journal({ at: now, day: prev.day }, "trade");
   for (const e of events) journal.fill(e);
 
@@ -324,6 +330,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     feed,
     log,
     marketNotes: { day: prev.day, coins: [...noted] },
+    paperOrders: [...(prev.paperOrders ?? []), ...ordersFrom(events, rejects, prev.day, now)] as PaperOrder[],
     milestones: reached.milestones,
   });
 }

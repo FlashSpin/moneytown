@@ -144,6 +144,10 @@ export type TradeEvent = {
   cost?: number;
   /** Coins bought or sold. */
   qty?: number;
+  /** Sats staked (the position's stake). */
+  stake?: number;
+  /** What opened the position: a strategy, or the villager's own call. */
+  by?: Approach;
   reason: string;
   /** The villager's own call at the trading desk, not its strategy's signal. */
   own?: boolean;
@@ -317,6 +321,9 @@ export type Trader = {
 
 type Step = { trader: Trader; event: TradeEvent | null };
 
+/** An order the exchange turned down: what was asked for, and why. */
+export type RejectedOrder = { coin: Asset; side: "long" | "short"; stake: number; by: Approach; reason: string };
+
 /** Stake for a new trade: the strategy's share of the purse, capped for weak purses. */
 export function stakeFor(balance: number, sizePct: number, stakeSats: number): number {
   const size = stakeSats > 0 && balance < stakeSats * WEAK_PURSE_SHARE ? Math.min(sizePct, SIZE_WEAK_MAX) : sizePct;
@@ -361,6 +368,8 @@ function closeAt(trader: Trader, pos: Position, exec: Executor, now: number, rea
       pnl,
       fee,
       reason,
+      stake: pos.stake,
+      by: pos.by ?? trader.strategy.kind,
       ...(fill.mid && fill.mid !== px ? { mid: fill.mid, cost: fill.cost } : {}),
       ...(pos.qty ? { qty: pos.qty } : {}),
       ...(own ? { own } : {}),
@@ -375,9 +384,11 @@ function openAt(
   open: { coin: Asset; side: "long" | "short"; stake: number; reason: string; by: Approach; own?: Position["own"]; sl: number },
   now: number,
   exec: Executor,
-): Step & { rejected?: string } {
+): Step & { rejected?: string; rejectedOrder?: RejectedOrder } {
   const fill = exec.open(open.coin, open.side, open.stake);
-  if (!fill.ok) return { trader, event: null, rejected: fill.reason };
+  if (!fill.ok) {
+    return { trader, event: null, rejected: fill.reason, rejectedOrder: { coin: open.coin, side: open.side, stake: open.stake, by: open.by, reason: fill.reason } };
+  }
   const fee = Math.round(fill.stake * exec.feeRate);
   const position: Position = {
     coin: open.coin,
@@ -403,6 +414,8 @@ function openAt(
       price: fill.price,
       fee,
       reason: open.reason,
+      stake: fill.stake,
+      by: open.by,
       risk: riskAt(fill.stake, trader.balance, open.sl),
       ...(fill.mid !== fill.price ? { mid: fill.mid, cost: fill.cost } : {}),
       ...(fill.qty ? { qty: fill.qty } : {}),
@@ -430,7 +443,7 @@ export function tradeStep(
   hot: ReadonlySet<Asset> = new Set(),
   gate: Gate = () => null,
   exec: Executor = idealExecutor(priceOf),
-): Step & { rejected?: string } {
+): Step & { rejected?: string; rejectedOrder?: RejectedOrder } {
   const st = trader.strategy;
   const pos = trader.position;
 
@@ -512,7 +525,7 @@ export function deskStep(
   stakeSats: number,
   gate: Gate = () => null,
   exec: Executor = idealExecutor(priceOf),
-): { trader: Trader; events: TradeEvent[]; skipped?: string } {
+): { trader: Trader; events: TradeEvent[]; skipped?: string; rejectedOrder?: RejectedOrder } {
   const why = order.why || "its own call";
   const events: TradeEvent[] = [];
   let t = trader;
@@ -554,7 +567,7 @@ export function deskStep(
   const own = { tp, sl, maxHoldH: clamp(order.hours ?? 12, 0.25, 48) };
   const reason = `${why} (${Math.round(p * 100)}% chance, +${Math.round(edge * 100)} pts edge)`;
   const step = openAt(t, { coin, side, stake, reason, by: "own", own, sl }, now, exec);
-  if (!step.event) return { trader: t, events, skipped: step.rejected };
+  if (!step.event) return { trader: t, events, skipped: step.rejected, rejectedOrder: step.rejectedOrder };
   events.push(step.event);
   return { trader: step.trader, events };
 }

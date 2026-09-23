@@ -173,6 +173,9 @@ export type GameState = {
    * ledger in the same statement as the world, then dropped (src/lib/world.server.ts).
    */
   postings?: import("./ledger.ts").Posting[];
+  /** Paper orders and strategy changes made by this change, not yet saved (written with the world, then dropped). */
+  paperOrders?: import("./paper.ts").PaperOrder[];
+  strategyChanges?: import("./paper.ts").StrategyChange[];
   /** The ledger: when it opened, and the latest check of every purse against it. */
   ledger?: { since: number; check?: import("./ledger.ts").Reconciliation };
   /** Trading halted: no new trades open (open ones are still managed). Set by the seal-bearer or a failed ledger check. */

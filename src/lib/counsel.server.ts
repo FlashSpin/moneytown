@@ -82,13 +82,26 @@ export function tryNextModel(status: number): boolean {
 }
 
 /** Tried in order when the one before is unknown to the API (404) — model names move fast. */
-const GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-3.6-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash-lite"];
+export const GEMINI_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash-lite",
+];
 
 /** Google Gemini, free tier via an AI Studio key. GEMINI_MODEL overrides the model. */
 async function tryGemini(prompt: string): Promise<string | null> {
   const apiKey = key("GEMINI_API_KEY");
   if (!apiKey) return null;
   const override = key("GEMINI_MODEL");
+  // Every model tried this time and how it failed, so the diagnostics show the whole story.
+  const trail: string[] = [];
+  const note = (entry: string) => {
+    trail.push(entry.slice(0, 90));
+    lastResult.set("gemini", trail.join(" · "));
+  };
   for (const model of override ? [override] : GEMINI_MODELS) {
     try {
       const res = await fetch(
@@ -114,8 +127,8 @@ async function tryGemini(prompt: string): Promise<string | null> {
       if (!res.ok) {
         // 404 = model unknown, 429 = that model's free quota is spent (quotas are per model),
         // 5xx = that model is overloaded → try the next one. A bad key (401/403) stops here.
-        lastResult.set("gemini", `${model}: ${await describeFailure(res)}`);
-        console.warn(`[counsel] Gemini ${lastResult.get("gemini")} — falling back.`);
+        note(`${model}: ${await describeFailure(res)}`);
+        console.warn(`[counsel] Gemini ${trail[trail.length - 1]} — falling back.`);
         if (tryNextModel(res.status) && !override) continue;
         return null;
       }
@@ -130,14 +143,14 @@ async function tryGemini(prompt: string): Promise<string | null> {
         .trim();
       if (!text) {
         const why = body.promptFeedback?.blockReason ?? body.candidates?.[0]?.finishReason ?? "no candidates";
-        lastResult.set("gemini", `${model}: empty reply (${why})`);
+        note(`${model}: empty reply (${why})`);
         return null;
       }
-      lastResult.set("gemini", `${model}: ok`);
+      note(`${model}: ok`);
       return text;
     } catch (error) {
       const why = error instanceof Error && error.name === "TimeoutError" ? "timed out" : "unreachable";
-      lastResult.set("gemini", `${model}: ${why}`);
+      note(`${model}: ${why}`);
       console.warn(`[counsel] Gemini ${model} ${why} — falling back.`);
       if (!override) continue;
       return null;

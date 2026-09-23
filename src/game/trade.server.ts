@@ -163,10 +163,10 @@ export function tradeParish(
 }
 
 /** Whether the villagers want to look at the market with the AI this tick (a minute's grace for a late schedule). */
-export function deskDue(state: GameState, now: number): boolean {
+export function deskDue(state: GameState, now: number, force = false): boolean {
   if (process.env.TRADING_DESK?.trim().toLowerCase() === "off") return false;
   if (!state.subjects.some(isLiving)) return false;
-  return now + 60_000 >= (state.desk?.nextAt ?? 0);
+  return force || now + 60_000 >= (state.desk?.nextAt ?? 0);
 }
 
 /**
@@ -174,7 +174,7 @@ export function deskDue(state: GameState, now: number): boolean {
  * caller re-runs this when the world changed under it) so the AI is asked
  * at most once per tick.
  */
-export async function runTradeTick(prev: GameState, memo: { desk?: Desk | null; tape?: Tape } = {}): Promise<GameState> {
+export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { error: string }; tape?: Tape; force?: boolean } = {}): Promise<GameState> {
   const now = Date.now();
   let tape = memo.tape ?? (await loadTape(coinsNeeded(prev)).catch(() => ({ ...prev.tape, dark: true, source: "dark" })));
   if (tape.dark && !tape.coins) tape = { ...tape, coins: prev.tape.coins };
@@ -183,7 +183,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | null; 
   memo.tape = tape;
 
   const ticks = appendTick(prev.ticks, now, pricesOf(tape));
-  const due = deskDue(prev, now);
+  const due = deskDue(prev, now, memo.force);
   if (due && memo.desk === undefined) {
     memo.desk = await tradingDesk({
       day: prev.day,
@@ -192,9 +192,10 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | null; 
       kingPlan: prev.council?.kingPlan,
       souls: prev.subjects.filter(isLiving).map((s) => soulFor(s, tape)),
       now,
-    }).catch(() => null);
+    }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
   }
-  const desk = due ? memo.desk : null;
+  const answer = due ? memo.desk : undefined;
+  const desk = answer && !("error" in answer) ? answer : null;
   const { subjects, events, speech, skipped } = tradeParish({ ...prev, tape }, tape, ticks, now, desk);
   return withTotals({
     ...prev,
@@ -208,6 +209,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | null; 
           say: desk?.say ?? "",
           orders: desk?.orders.size ?? 0,
           skipped,
+          ...(answer && "error" in answer ? { error: answer.error.slice(0, 300) } : {}),
           ...(desk ? { brain: desk.brain } : {}),
         }
       : prev.desk,

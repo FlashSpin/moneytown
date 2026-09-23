@@ -1,0 +1,39 @@
+# Backtests every strategy against the stored price history (and Kraken's
+# recent 5-minute candles), with hold-out and walk-forward validation, and
+# saves the run for the /backtest page. Weekly, or by hand from the Actions
+# tab. Uses the same CRON_SECRET repository secret as the trading tick.
+name: Backtest strategies
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Days of history to test on (1-90)"
+        default: "30"
+      coins:
+        description: "How many of the market's coins (1-50)"
+        default: "20"
+
+permissions: {}
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run the backtest
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://moneytown.vercel.app' }}
+          DAYS: ${{ inputs.days || '30' }}
+          COINS: ${{ inputs.coins || '20' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Add the CRON_SECRET repository secret (same value as in Vercel)."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error --max-time 290 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/backtest?days=$DAYS&coins=$COINS"

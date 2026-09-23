@@ -45,6 +45,11 @@ async function trade(request: Request): Promise<Response> {
               mind: next.desk.brain?.label ?? "none answered",
               ...(next.desk.error ? { why: next.desk.error } : {}),
             } : null;
+      // Keep the accepted prices for backtesting; a failure here never fails the tick.
+      const { acceptedPrices, recordPrices } = await import("@/lib/history.server");
+      await recordPrices(next.lastTickAt ?? Date.now(), acceptedPrices(next.ticks, next.lastTickAt ?? 0)).catch((e: unknown) =>
+        console.warn("[trade] price history not recorded:", e),
+      );
       const check = next.ledger?.check;
       return Response.json({
         ok: true,

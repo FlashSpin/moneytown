@@ -114,6 +114,21 @@ export function parseKrakenTicker(body: unknown): Map<string, Quote> {
   return out;
 }
 
+/**
+ * Kraken's OHLC → closed candles as (ms, close), oldest first. Kraken's last
+ * candle is still forming, so it is left out.
+ */
+export function parseKrakenOhlc(body: unknown): { t: number; close: number }[] {
+  const result = (body as { result?: Record<string, unknown> })?.result;
+  if (!result || typeof result !== "object") return [];
+  const rows = Object.entries(result).find(([k, v]) => k !== "last" && Array.isArray(v))?.[1] as unknown[][] | undefined;
+  if (!rows) return [];
+  return rows
+    .slice(0, -1)
+    .map((r) => ({ t: Number(r[0]) * 1000, close: Number(r[4]) }))
+    .filter((c) => c.t > 0 && c.close > 0);
+}
+
 /** CoinGecko's /coins/markets → coins in market-cap order. */
 export function parseGeckoMarkets(body: unknown): MarketCoin[] {
   if (!Array.isArray(body)) return [];

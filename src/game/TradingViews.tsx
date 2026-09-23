@@ -233,6 +233,9 @@ export function TradingFloor() {
         </p>
       ) : null}
       <Exposure subjects={subjects} tape={tape} />
+      <p className="books-line">
+        <a href="/backtest">How the strategies did in backtests</a> — replayed on past prices, judged on data they never saw.
+      </p>
       {books?.check ? (
         <p className={books.check.ok ? "books-line" : "books-line books-bad"}>
           {books.check.ok

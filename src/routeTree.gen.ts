@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as BacktestRouteImport } from './routes/backtest'
+import { Route as ApiBacktestRouteImport } from './routes/api/backtest'
 import { Route as ApiLedgerRouteImport } from './routes/api/ledger'
 import { Route as ApiReviewRouteImport } from './routes/api/review'
 import { Route as ApiTickRouteImport } from './routes/api/tick'
@@ -18,6 +20,16 @@ import { Route as ApiTradeRouteImport } from './routes/api/trade'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BacktestRoute = BacktestRouteImport.update({
+  id: '/backtest',
+  path: '/backtest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBacktestRoute = ApiBacktestRouteImport.update({
+  id: '/api/backtest',
+  path: '/api/backtest',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiLedgerRoute = ApiLedgerRouteImport.update({
@@ -43,6 +55,8 @@ const ApiTradeRoute = ApiTradeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/backtest': typeof BacktestRoute
+  '/api/backtest': typeof ApiBacktestRoute
   '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
@@ -50,6 +64,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/backtest': typeof BacktestRoute
+  '/api/backtest': typeof ApiBacktestRoute
   '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
@@ -58,6 +74,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/backtest': typeof BacktestRoute
+  '/api/backtest': typeof ApiBacktestRoute
   '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
@@ -65,12 +83,28 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/ledger' | '/api/review' | '/api/tick' | '/api/trade'
+  fullPaths:
+    | '/'
+    | '/backtest'
+    | '/api/backtest'
+    | '/api/ledger'
+    | '/api/review'
+    | '/api/tick'
+    | '/api/trade'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/ledger' | '/api/review' | '/api/tick' | '/api/trade'
+  to:
+    | '/'
+    | '/backtest'
+    | '/api/backtest'
+    | '/api/ledger'
+    | '/api/review'
+    | '/api/tick'
+    | '/api/trade'
   id:
     | '__root__'
     | '/'
+    | '/backtest'
+    | '/api/backtest'
     | '/api/ledger'
     | '/api/review'
     | '/api/tick'
@@ -79,6 +113,8 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BacktestRoute: typeof BacktestRoute
+  ApiBacktestRoute: typeof ApiBacktestRoute
   ApiLedgerRoute: typeof ApiLedgerRoute
   ApiReviewRoute: typeof ApiReviewRoute
   ApiTickRoute: typeof ApiTickRoute
@@ -92,6 +128,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/backtest': {
+      id: '/backtest'
+      path: '/backtest'
+      fullPath: '/backtest'
+      preLoaderRoute: typeof BacktestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/backtest': {
+      id: '/api/backtest'
+      path: '/api/backtest'
+      fullPath: '/api/backtest'
+      preLoaderRoute: typeof ApiBacktestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/ledger': {
@@ -127,6 +177,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BacktestRoute: BacktestRoute,
+  ApiBacktestRoute: ApiBacktestRoute,
   ApiLedgerRoute: ApiLedgerRoute,
   ApiReviewRoute: ApiReviewRoute,
   ApiTickRoute: ApiTickRoute,

@@ -19,7 +19,7 @@ import { change, priorRange, rsi, sma } from "./indicators.ts";
 import { avoids, coinEdge, learnTrade, type Approach, type Knowledge } from "./knowledge.ts";
 import { idealExecutor, type Executor } from "./execution.ts";
 import type { Gate } from "./limits.ts";
-import { calibratedChance, edgeOf, FEE_RATE, kelly, riskShare, stakeForRisk, strategyRisk, TRADING_COST_PCT } from "./risk.ts";
+import { calibratedChance, edgeOf, kelly, riskShare, stakeForRisk, strategyRisk, TRADING_COST_PCT } from "./risk.ts";
 import type { Temper } from "./trading.ts";
 
 export { FEE_RATE } from "./risk.ts";
@@ -291,7 +291,7 @@ function closeAt(trader: Trader, pos: Position, exec: Executor, now: number, rea
   const fill = exec.close(pos.coin, pos.side, pos.stake, pos.qty);
   const px = fill.price;
   const gross = unrealized(pos, px);
-  const fee = Math.round((pos.stake + gross) * FEE_RATE);
+  const fee = Math.round((pos.stake + gross) * exec.feeRate);
   // A purse can't go below nothing: a loss bigger than the purse takes only what is there.
   const balance = Math.max(0, trader.balance + gross - fee);
   const pnl = balance - trader.balance;
@@ -335,7 +335,7 @@ function openAt(
 ): Step & { rejected?: string } {
   const fill = exec.open(open.coin, open.side, open.stake);
   if (!fill.ok) return { trader, event: null, rejected: fill.reason };
-  const fee = Math.round(fill.stake * FEE_RATE);
+  const fee = Math.round(fill.stake * exec.feeRate);
   const position: Position = {
     coin: open.coin,
     side: open.side,

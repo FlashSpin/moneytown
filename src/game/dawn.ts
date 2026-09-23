@@ -21,6 +21,19 @@ export function marketCoins(tape: { coins?: string[]; assets: Record<string, { u
   return priced.length ? priced : CORE_ASSETS;
 }
 
+/**
+ * The stalls to draw: the world's own market list, or — for a world saved
+ * before it had one (until its next review) — the live price feed's list.
+ */
+export function stallCoins(
+  world: { coins?: string[]; assets: Record<string, { usd: number }> },
+  live: { coins?: string[]; assets: Record<string, { usd: number }> } | null | undefined,
+): Asset[] {
+  if (world.coins?.length) return world.coins;
+  if (live?.coins?.length) return live.coins;
+  return marketCoins(world);
+}
+
 /** A coin's live price, or 0 when the market has none. */
 export function priceOf(tape: { assets: Record<string, { usd: number }> }, coin: Asset): number {
   return tape.assets[coin]?.usd ?? 0;

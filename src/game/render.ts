@@ -1,5 +1,5 @@
 import { KING_DRAW, MAP_H, MAP_W, SUBJECT_DRAW } from "./constants";
-import { marketCoins } from "./dawn";
+import { stallCoins } from "./dawn";
 import { formatCoinPrice } from "@/lib/market";
 import { AWNINGS, SHOP_SLOTS } from "./shops";
 import {
@@ -337,7 +337,7 @@ function drawShopSigns(
   world: Tape,
   live: Tape | null,
 ) {
-  const coins = marketCoins(world).slice(0, SHOP_SLOTS.length);
+  const coins = stallCoins(world, live).slice(0, SHOP_SLOTS.length);
   const tape = live && !live.dark ? live : world;
   const compact = scale < 0.6;
   coins.forEach((coin, i) => {
@@ -510,7 +510,7 @@ export function drawTown(
       draw: () => drawProp(ctx, img, p),
     });
   }
-  marketCoins(opts.tape)
+  stallCoins(opts.tape, opts.liveTape)
     .slice(0, SHOP_SLOTS.length)
     .forEach((coin, i) => {
       const slot = SHOP_SLOTS[i]!;

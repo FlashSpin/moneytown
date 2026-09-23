@@ -40,7 +40,7 @@ async function visitorKey(): Promise<string> {
 
 /** Speak to the King. He answers, and may act on the petition within the crown's rules. */
 export const petitionTheKing = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => PetitionInput.parse(data))
+  .validator((data: unknown) => PetitionInput.parse(data))
   .handler(async ({ data }): Promise<PetitionResult | { throttled: true }> => {
     const { holdsSeal } = await import("./seal.server");
     const sovereign = holdsSeal(data.seal);
@@ -52,7 +52,7 @@ export const petitionTheKing = createServerFn({ method: "POST" })
 
 /** Check a royal seal passphrase without speaking to the King. */
 export const presentSeal = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => z.object({ seal: z.string().max(200) }).parse(data))
+  .validator((data: unknown) => z.object({ seal: z.string().max(200) }).parse(data))
   .handler(async ({ data }): Promise<{ sovereign: boolean; throttled?: true }> => {
     if (throttled(await visitorKey())) return { sovereign: false, throttled: true };
     const { holdsSeal } = await import("./seal.server");

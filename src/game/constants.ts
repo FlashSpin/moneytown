@@ -8,7 +8,10 @@ import type { Asset } from "./dawn.ts";
  * one soul a day regardless.
  */
 export const KING_START = 300_000;
-export const RENT_GBP = 1.5;
+/** Daily upkeep per villager, paid into the King's treasury. */
+export const RENT_GBP = 0.25;
+/** A villager whose purse falls below this cannot pay the King's dues, and hangs. */
+export const HANG_BELOW_GBP = 2;
 export const STAKE_GBP = 20;
 export const TAX_MIN = 0;
 export const TAX_MAX = 0.6;
@@ -23,6 +26,17 @@ export const SUMMONS_PER_DAY = 6;
 /** Hard ceiling on petitions (AI calls) per day, across every visitor. */
 export const PETITIONS_PER_DAY = 300;
 export const PETITION_MAX_CHARS = 280;
+
+/** The King's trading reviews: never more often than this (a scheduler calls every 4h). */
+export const REVIEW_MIN_HOURS = 3;
+/** Share of the purse at risk when the King gives no size: 10%..100%, default 40%. */
+export const SIZE_MIN = 0.1;
+export const SIZE_DEFAULT = 0.4;
+/** A villager whose purse is below this share of the stake may risk no more than SIZE_WEAK_MAX. */
+export const WEAK_PURSE_SHARE = 0.5;
+export const SIZE_WEAK_MAX = 0.25;
+/** Price samples kept for the King to read trends (one per review: ~2 days at 4h). */
+export const PRICE_HISTORY = 12;
 
 /** How often the client re-fetches the shared world. The world itself only changes once a day. */
 export const WORLD_POLL_MS = 60_000;

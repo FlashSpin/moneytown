@@ -19,6 +19,7 @@ import {
   LIVING_CAP,
   PETITIONS_PER_DAY,
   POI,
+  HANG_BELOW_GBP,
   RENT_GBP,
   SUMMONS_PER_DAY,
   SUMMONS_PER_PETITION,
@@ -30,7 +31,7 @@ import { defaultKingPolicy, petitionSummonCount } from "./economy";
 import { BRAIN_LABELS } from "./llm.server";
 import type { GameState, Subject } from "./types";
 import { makeSubject, pushLog, withTotals } from "./world";
-import { formatGbp, mulberry32, rentSats, satsToGbp, stakeSats, tapeGbp } from "./wallets";
+import { formatGbp, gbpToSats, mulberry32, satsToGbp, stakeSats, tapeGbp } from "./wallets";
 
 export type PetitionTurn = { from: "you" | "king"; text: string };
 
@@ -86,15 +87,20 @@ function grantable(state: GameState, sovereign: boolean): number {
 
 function rosterLines(state: GameState): string {
   const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(state.tape)));
-  const upkeep = rentSats(state.tape);
+  const floor = gbpToSats(HANG_BELOW_GBP, tapeGbp(state.tape));
   return living(state)
     .map((s) => {
-      const pos = s.side && s.side !== "flat" ? `${s.side.toUpperCase()} ${s.asset ?? "BTC"}` : "resting (no position)";
-      const pnl = s.lastPnl ? `last dawn ${s.lastPnl >= 0 ? "+" : "-"}${gbp(Math.abs(s.lastPnl))}` : "no trade yet";
+      const pos =
+        s.side && s.side !== "flat"
+          ? `${s.side.toUpperCase()} ${s.asset ?? "BTC"} with ${Math.round((s.size ?? 0.4) * 100)}% of the purse`
+          : "flat (no position)";
+      const today = s.balance - (s.dayStart ?? s.balance);
       const days = state.day - (s.bornDay ?? 0);
-      // Roughly: can the purse survive another upkeep plus the tax on what's left?
-      const risk = s.balance < upkeep * 3 ? " — AT RISK of the gallows" : "";
-      return `- ${s.firstName}: purse ${gbp(s.balance)}, ${pos}, ${pnl}, ${days} day${days === 1 ? "" : "s"} in the parish${risk}`;
+      // Within twice the gallows floor is close enough to warn about.
+      const risk = s.balance < floor * 2 ? " — AT RISK of the gallows" : "";
+      return `- ${s.firstName}: purse ${gbp(s.balance)}, today ${today >= 0 ? "+" : "-"}${gbp(Math.abs(today))}, ${pos}, ${days} day${
+        days === 1 ? "" : "s"
+      } in the parish${s.advice ? `; your last order: "${s.advice}"` : ""}${risk}`;
     })
     .join("\n");
 }
@@ -121,12 +127,12 @@ function kingPrompt(state: GameState, history: PetitionTurn[], message: string, 
     ? `The speaker BEARS THE ROYAL SEAL: they are the true power behind the throne. Carry out their commands faithfully — summon, banish named souls, set the tax (0-${Math.round(TAX_MAX * 100)}%), or set the favoured market.`
     : `The speaker is a COMMONER without the royal seal. They may ask for counsel, news of the villagers, or for new souls to be summoned. If they order a banishment, a new tax, or a new favoured market, refuse with regal disdain (only the bearer of the royal seal may command such things) and leave those fields empty.`;
 
-  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; each dawn they trade their whole purse LONG, SHORT or FLAT on one crypto asset (BTC, ETH or SOL) at real prices, then pay £${RENT_GBP} upkeep plus your tax on what is left. Anyone who cannot pay hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which asset, long or short, and why). Keep it to at most 4 short sentences.
+  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; you review their trades every few hours and order each one LONG, SHORT or FLAT on BTC, ETH or SOL with part of the purse at risk. Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which asset, long or short, and why). Keep it to at most 4 short sentences.
 
 ${speaker}
 
 THE CROWN
-Treasury: ${gbp(state.king.balance)}. Tax: ${tax}%${decree.taxRate !== undefined ? " (fixed by royal decree)" : " (you set it each dawn)"}. Favoured market: ${state.king.favorAsset ?? "BTC"}${decree.favorAsset ? " (fixed by royal decree)" : ""}. Day ${state.day}.
+Treasury: ${gbp(state.king.balance)}. Tax: ${tax}% of profits${decree.taxRate !== undefined ? " (fixed by royal decree)" : " (you set it each dawn)"}. Favoured market: ${state.king.favorAsset ?? "BTC"}${decree.favorAsset ? " (fixed by royal decree)" : ""}. Day ${state.day}.
 Summoning costs ${gbp(stakeSats(state.tape))} per soul; right now you can summon AT MOST ${max}${max === 0 ? " (the treasury, the living cap of " + LIVING_CAP + " or today's summons limit forbid more — say so)" : ""}.
 
 MARKETS

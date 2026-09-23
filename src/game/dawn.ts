@@ -21,6 +21,12 @@ export function marketCoins(tape: { coins?: string[]; assets: Record<string, { u
   return priced.length ? priced : CORE_ASSETS;
 }
 
+/** Every coin the villagers may trade: the stalls' coins, then the rest of the scan list. */
+export function scanCoins(tape: { coins?: string[]; scan?: string[]; assets: Record<string, { usd: number }> }): Asset[] {
+  const stalls = marketCoins(tape);
+  return tape.scan?.length ? [...new Set([...stalls, ...tape.scan])] : stalls;
+}
+
 /**
  * The stalls to draw: the world's own market list, or — for a world saved
  * before it had one (until its next review) — the live price feed's list.

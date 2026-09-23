@@ -10,7 +10,7 @@
  */
 import { loadTape } from "@/lib/tape.server";
 import { SHOUT_LIFE } from "./constants";
-import { marketCoins, priceOf } from "./dawn";
+import { marketCoins, priceOf, scanCoins } from "./dawn";
 import { appendTick, seriesOf, type Ticks } from "./indicators";
 import { standAt } from "./shops";
 import { addLesson } from "./knowledge";
@@ -59,9 +59,9 @@ export function soulFor(s: Subject, tape: Tape): CouncilSoul {
   };
 }
 
-/** Every coin a villager may trade right now: the market's, priced. */
+/** Every coin a villager may trade right now: the whole scan list, priced. */
 export function tradableCoins(tape: Tape): string[] {
-  return marketCoins(tape).filter((c) => priceOf(tape, c) > 0);
+  return scanCoins(tape).filter((c) => priceOf(tape, c) > 0);
 }
 
 export function pricesOf(tape: Tape): Record<string, number> {
@@ -80,9 +80,11 @@ export function tradeParish(
   ticks: Ticks,
   now: number,
   desk?: Pick<Desk, "orders" | "lessons"> | null,
-): { subjects: Subject[]; events: TradeEvent[]; speech: SpeechLine[] } {
+): { subjects: Subject[]; events: TradeEvent[]; speech: SpeechLine[]; skipped: number } {
   const market = marketCoins(tape);
   const universe = tradableCoins(tape);
+  const hot = new Set(tape.trending ?? []);
+  let skipped = 0;
   const stake = stakeSats(tape);
   const rng = mulberry32(state.seed + Math.floor(now / 60_000));
   const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(tape)));
@@ -110,10 +112,11 @@ export function tradeParish(
     const order = desk?.orders.get(s.id);
     // Its own call at the desk, if it made one that could be carried out; otherwise its strategy trades.
     const own = order ? deskStep(me, order, px, now, stake) : null;
+    if (own?.skipped) skipped++;
     const step = own?.events.length
       ? { trader: own.trader, fills: own.events }
       : (() => {
-          const r = tradeStep(me, px, (coin) => seriesOf(ticks, coin), now, stake, universe);
+          const r = tradeStep(me, px, (coin) => seriesOf(ticks, coin), now, stake, universe, hot);
           return { trader: r.trader, fills: r.event ? [r.event] : [] };
         })();
     const trader = step.trader;
@@ -156,7 +159,7 @@ export function tradeParish(
     const dest = event.action === "open" ? standAt(event.coin, market) : wanderPoint(rng);
     return { ...next, destX: dest.x + (rng() - 0.5) * 36, destY: dest.y + rng() * 16, state: "walk" as const, lastPnl: event.pnl ?? next.lastPnl };
   });
-  return { subjects, events, speech: speech.slice(0, 8) };
+  return { subjects, events, speech: speech.slice(0, 8), skipped };
 }
 
 /** Whether the villagers want to look at the market with the AI this tick (a minute's grace for a late schedule). */
@@ -192,7 +195,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | null; 
     }).catch(() => null);
   }
   const desk = due ? memo.desk : null;
-  const { subjects, events, speech } = tradeParish({ ...prev, tape }, tape, ticks, now, desk);
+  const { subjects, events, speech, skipped } = tradeParish({ ...prev, tape }, tape, ticks, now, desk);
   return withTotals({
     ...prev,
     tape,
@@ -204,6 +207,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | null; 
           nextAt: now + (desk?.nextMin ?? DESK_DEFAULT_GAP) * 60_000,
           say: desk?.say ?? "",
           orders: desk?.orders.size ?? 0,
+          skipped,
           ...(desk ? { brain: desk.brain } : {}),
         }
       : prev.desk,

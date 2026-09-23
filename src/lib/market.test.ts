@@ -100,3 +100,12 @@ describe("shop-sign prices", () => {
     assert.equal(formatCoinPrice(0), "—");
   });
 });
+
+describe("trending coins", () => {
+  it("reads CoinGecko's trending searches", async () => {
+    const { parseGeckoTrending } = await import("./market.ts");
+    const body = { coins: [{ item: { symbol: "pepe" } }, { item: { symbol: "SOL" } }, { item: { symbol: "pepe" } }, { item: {} }] };
+    assert.deepEqual(parseGeckoTrending(body), ["PEPE", "SOL"]);
+    assert.deepEqual(parseGeckoTrending(null), []);
+  });
+});

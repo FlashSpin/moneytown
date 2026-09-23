@@ -206,7 +206,7 @@ describe("a villager's own calls at the desk", () => {
   const priceOf = (c: string) => px[c] ?? 0;
 
   it("opens a trade of its own choosing, with its own targets", () => {
-    const { trader, events } = deskStep(base, { action: "short", coin: "SOL", sizePct: 0.3, tp: 3, sl: 1.5, hours: 2, why: "fading the pump" }, priceOf, 1_000, 20_000);
+    const { trader, events } = deskStep(base, { action: "short", coin: "SOL", sizePct: 0.3, chance: 0.7, tp: 3, sl: 1.5, hours: 2, why: "fading the pump" }, priceOf, 1_000, 20_000);
     assert.equal(events.length, 1);
     assert.equal(events[0]!.own, true);
     assert.equal(trader.position?.side, "short", "its own call may short even if its strategy doesn't");
@@ -216,7 +216,7 @@ describe("a villager's own calls at the desk", () => {
   });
 
   it("its own trade keeps its own targets and time limit", () => {
-    const open = deskStep(base, { action: "buy", coin: "SOL", tp: 5, sl: 3, hours: 1, why: "x" }, priceOf, 0, 20_000).trader;
+    const open = deskStep(base, { action: "buy", coin: "SOL", chance: 0.8, tp: 5, sl: 3, hours: 1, why: "x" }, priceOf, 0, 20_000).trader;
     assert.equal(tradeStep(open, () => 102, () => flat(20), 60_000, 20_000).event, null, "strategy TP of 2% doesn't apply");
     const late = tradeStep(open, () => 101, () => flat(20), 3_600_000, 20_000);
     assert.match(late.event!.reason, /time limit \(1h\)/);
@@ -224,20 +224,43 @@ describe("a villager's own calls at the desk", () => {
   });
 
   it("switches trades: closes the old one, opens the new", () => {
-    const open = deskStep(base, { action: "buy", coin: "SOL", why: "x" }, priceOf, 0, 20_000).trader;
-    const { trader, events } = deskStep(open, { action: "buy", coin: "ETH", why: "better setup" }, priceOf, 1_000, 20_000);
+    const open = deskStep(base, { action: "buy", coin: "SOL", chance: 0.8, why: "x" }, priceOf, 0, 20_000).trader;
+    const { trader, events } = deskStep(open, { action: "buy", coin: "ETH", chance: 0.8, why: "better setup" }, priceOf, 1_000, 20_000);
     assert.deepEqual(events.map((e) => e.action), ["close", "open"]);
     assert.equal(trader.position?.coin, "ETH");
   });
 
   it("closes on its own call, and ignores orders it can't carry out", () => {
-    const open = deskStep(base, { action: "buy", coin: "SOL", why: "x" }, priceOf, 0, 20_000).trader;
+    const open = deskStep(base, { action: "buy", coin: "SOL", chance: 0.8, why: "x" }, priceOf, 0, 20_000).trader;
     const closed = deskStep(open, { action: "close", why: "taking it off" }, priceOf, 1_000, 20_000);
     assert.equal(closed.events[0]?.reason, "taking it off");
     assert.equal(closed.trader.position, undefined);
     assert.equal(deskStep(base, { action: "close", why: "" }, priceOf, 0, 20_000).events.length, 0);
-    assert.equal(deskStep(base, { action: "buy", coin: "FAKE", why: "" }, priceOf, 0, 20_000).events.length, 0);
-    const held = deskStep(open, { action: "buy", coin: "SOL", why: "" }, priceOf, 1_000, 20_000);
+    assert.equal(deskStep(base, { action: "buy", coin: "FAKE", chance: 0.8, why: "" }, priceOf, 0, 20_000).events.length, 0);
+    const held = deskStep(open, { action: "buy", coin: "SOL", chance: 0.8, why: "" }, priceOf, 1_000, 20_000);
     assert.equal(held.events.length, 0, "already long SOL");
+  });
+
+  it("turns down a call without a clear edge, and one that gives no odds", () => {
+    // TP 2 / SL 1 breaks even at (1 + 0.8) / 3 = 60%: 65% is only 5 points better.
+    const thin = deskStep(base, { action: "buy", coin: "SOL", chance: 0.65, why: "maybe" }, priceOf, 0, 20_000);
+    assert.equal(thin.events.length, 0);
+    assert.match(thin.skipped!, /edge too thin/);
+    assert.equal(deskStep(base, { action: "buy", coin: "SOL", why: "trust me" }, priceOf, 0, 20_000).skipped, "gave no odds");
+    const ok = deskStep(base, { action: "buy", coin: "SOL", chance: 0.7, why: "clear setup" }, priceOf, 0, 20_000);
+    assert.equal(ok.events.length, 1);
+    assert.match(ok.events[0]!.reason, /70% chance, \+10 pts edge/);
+  });
+
+  it("never risks more than 6% of the purse at the stop", () => {
+    const { events, trader } = deskStep(base, { action: "buy", coin: "SOL", chance: 0.95, tp: 10, sl: 8, why: "sure thing" }, priceOf, 0, 20_000);
+    assert.equal(events[0]!.risk, 0.06);
+    assert.equal(trader.position?.stake, Math.floor((100_000 * 0.06) / 0.088));
+  });
+
+  it("marks down an over-confident villager by how its calls actually went", () => {
+    const k = { coins: {}, approaches: { own: { w: 1, l: 9, pnl: -900 } }, sides: { long: { w: 0, l: 0, pnl: 0 }, short: { w: 0, l: 0, pnl: 0 } }, lessons: [] };
+    const r = deskStep({ ...base, knowledge: k }, { action: "buy", coin: "SOL", chance: 0.75, why: "again" }, priceOf, 0, 20_000);
+    assert.match(r.skipped!, /edge too thin/, "75% claimed, but it wins 1 in 10");
   });
 });

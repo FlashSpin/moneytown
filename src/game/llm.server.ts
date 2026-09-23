@@ -16,10 +16,11 @@
  */
 import { askCounsel, type CounselSource } from "@/lib/counsel.server";
 import { HANG_BELOW_GBP, RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
-import { marketCoins, priceOf, type Asset } from "./dawn";
+import { marketCoins, priceOf, scanCoins, type Asset } from "./dawn";
 import { trimSpeech } from "./brains";
 import { coinStats, seriesOf, type Ticks } from "./indicators";
 import { describeKnowledge, type Knowledge } from "./knowledge";
+import { MAX_RISK, MIN_EDGE, ROUND_TRIP_PCT } from "./risk";
 import {
   cleanStrategy,
   coinsLabel,
@@ -98,18 +99,32 @@ function asAsset(v: unknown, tape: Tape): Asset | null {
 const pct = (n: number | null) => (n === null ? "?" : `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`);
 
 function marketsBlock(tape: Tape, ticks: Ticks | undefined): string {
-  return marketCoins(tape)
+  const stalls = marketCoins(tape).length;
+  return scanCoins(tape)
     .map((a, i) => {
       const info = tape.assets[a];
       if (!info || !(info.usd > 0)) return `- ${a}: no price — do not trade it`;
       const s = coinStats(seriesOf(ticks, a));
       const price = info.usd >= 100 ? Math.round(info.usd).toLocaleString("en-US") : info.usd >= 1 ? info.usd.toFixed(2) : info.usd.toPrecision(4);
-      return `- #${i + 1} ${a}${info.name && info.name.toUpperCase() !== a ? ` (${info.name})` : ""}: $${price} | 1h ${pct(s.ch1h)} 4h ${pct(
+      return `${i === stalls ? "(beyond the town's stalls, also tradable:)\n" : ""}- #${i + 1} ${a}${info.name && info.name.toUpperCase() !== a ? ` (${info.name})` : ""}: $${price} | 1h ${pct(s.ch1h)} 4h ${pct(
         s.ch4h,
       )} 24h ${pct(info.change24h)} | RSI ${s.rsi === null ? "?" : s.rsi.toFixed(0)} | volatility ${s.vol === null ? "?" : `${s.vol.toFixed(2)}%/5min`}`;
     })
     .join("\n");
 }
+
+/** The crowd's mood: fear & greed, and the coins most searched for right now. */
+function sentimentLine(tape: Tape): string {
+  const listed = new Set(scanCoins(tape));
+  const trending = (tape.trending ?? []).map((c) => (listed.has(c) ? c : `${c} (not tradable here)`));
+  return `Crowd sentiment: fear & greed ${tape.fearGreed} (${tape.fearGreedLabel}); trending searches: ${
+    trending.length ? trending.join(", ") : "unknown"
+  }. Hype can mean momentum — or a crowded trade about to reverse.`;
+}
+
+const SIZING = `Sizing is automatic and learned: every trade is sized by the Kelly criterion from the villager's own win rate (half-Kelly), and no trade may lose more than ${Math.round(
+  MAX_RISK * 100,
+)}% of the purse at its stop-loss; a losing approach shrinks to tiny stakes until it proves itself. "size" is only the most the villager is willing to stake.`;
 
 const MENU = STRATEGY_KINDS.map(
   (k) => `- ${k}: ${STRATEGY_INFO[k].about} (typical take-profit ${STRATEGY_INFO[k].tp}%, stop-loss ${STRATEGY_INFO[k].sl}%)`,
@@ -175,13 +190,13 @@ How the money works:
 The strategies:
 ${MENU}
 
-Match strategy to market: momentum/breakout/trend when coins trend (big 1h/4h moves), reversion when they chop around (RSI extremes, moves that reverse), scalp only on liquid, steady coins. ${COIN_RULE}; focus only when the villager's own record or the market gives a clear reason. Learn from each villager's record: steer it towards the coins and approaches that have paid it and away from those that haven't. Size by confidence and the purse's strength: 15-35 normally; weak purses (under £10) no more than 25. Fit each villager's temperament. Give struggling villagers (losing records) a change of approach; leave winning ones alone. Spread the parish across coins and strategies.${
+Match strategy to market: momentum/breakout/trend when coins trend (big 1h/4h moves), reversion when they chop around (RSI extremes, moves that reverse), scalp only on liquid, steady coins. ${COIN_RULE}; focus only when the villager's own record or the market gives a clear reason. Learn from each villager's record: steer it towards the coins and approaches that have paid it and away from those that haven't. ${SIZING} Fit each villager's temperament. Give struggling villagers (losing records) a change of approach; leave winning ones alone. Spread the parish across coins and strategies.${
     input.favorFixed ? `\nThe bearer of the royal seal favours ${input.favorAsset}: include it where it fits.` : ""
   }
 
 Markets (5-minute data):
 ${marketsBlock(input.tape, input.ticks)}
-Fear & greed: ${input.tape.fearGreed} (${input.tape.fearGreedLabel}).
+${sentimentLine(input.tape)}
 
 Treasury: ${gbp(input.kingBalance)}.
 Villagers (id | name | temperament | purse | open trade | record | current strategy, then what it has learned):
@@ -228,7 +243,7 @@ function parseStrategies(raw: unknown, souls: CouncilSoul[], tape: Tape): Map<st
   const out = new Map<string, Choice>();
   if (!Array.isArray(raw)) return out;
   const byId = new Map(souls.map((s) => [s.id, s]));
-  const market = marketCoins(tape).filter((c) => priceOf(tape, c) > 0);
+  const market = scanCoins(tape).filter((c) => priceOf(tape, c) > 0);
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const r = row as Record<string, unknown>;
@@ -297,7 +312,7 @@ Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee.
 
 Markets (5-minute data):
 ${marketsBlock(input.tape, input.ticks)}
-Fear & greed: ${input.tape.fearGreed} (${input.tape.fearGreedLabel}).
+${sentimentLine(input.tape)}
 
 The King's plan: "${input.kingPlan}"
 
@@ -310,7 +325,8 @@ ${people}
 Hold the council:
 1. A short debate (4-8 lines) between villagers and with the King ("king" may reply). Talk real strategy: cite prices, 1h/4h moves, RSI and volatility above; say what's been working (their fills, records and what each has learned) and what hasn't; agree or push back on the King; plan together so the parish isn't all on one coin or one strategy.
 2. Then EACH villager chooses its OWN strategy in character, building on what it has learned: keep what works, change what doesn't, and write down one new lesson. Following the King is sensible, but a villager may choose differently if its temperament, record or reading of the market gives it a reason — say why.
-Rules: ${COIN_RULE}; size is % of the purse per trade (10-100; weak purses under £10 no more than 25); take-profit well above the fees. Period English, plain about the trading. Never ask for keys.
+${SIZING}
+Rules: ${COIN_RULE}; size is the most % of the purse per trade (10-100; weak purses under £10 no more than 25); take-profit well above the fees. Period English, plain about the trading. Never ask for keys.
 
 Reply with JSON only:
 {"discussion":[{"from":"villager id or king","to":"villager id, king or null","text":"one line"}],"decisions":[${STRATEGY_JSON},"plan":"first-person reason, one sentence","followsKing":true,"lesson":"one plain sentence it has learned from its own trades (empty if nothing new)"}]}`;
@@ -361,9 +377,15 @@ function deskPrompt(input: { day: number; tape: Tape; ticks?: Ticks; kingPlan?: 
     .join("\n");
   return `Day ${input.day}. The TRADING DESK of Ledgerford. Each villager below is an independent day-trading bot with its own temperament. Its strategy already trades automatically every 5 minutes across every coin; here each villager may ALSO act on its own judgement right now: buy (long), short, close its trade, or hold (let its strategy carry on). Each villager holds at most one trade; buying or shorting while holding another trade switches (two fills). Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee, so only act on a real edge — holding is usually right, and churning loses money.
 
+How a call is judged: give your honest "chance" (%) that the trade reaches its take-profit before its stop-loss. Break-even chance = (sl + ${ROUND_TRIP_PCT.toFixed(1)}) / (tp + sl). A call only goes ahead when its chance beats break-even by at least ${Math.round(
+    MIN_EDGE * 100,
+  )} points — the trade must look clearly mispriced — and each villager's chances are checked against how its past calls actually went (over-confident villagers get marked down). The stake is then sized by the Kelly criterion, never risking more than ${Math.round(
+    MAX_RISK * 100,
+  )}% of the purse at the stop. Be calibrated, not hopeful.
+
 Markets (5-minute data):
 ${marketsBlock(input.tape, input.ticks)}
-Fear & greed: ${input.tape.fearGreed} (${input.tape.fearGreedLabel}).
+${sentimentLine(input.tape)}
 ${input.kingPlan ? `\nThe King's plan: "${input.kingPlan}"\n` : ""}
 The villagers (id | name | temperament | purse | open trade | record | strategy, then what it has learned):
 ${rosterRows(input.souls, input.tape, gbp)}
@@ -374,8 +396,8 @@ ${held || "(none)"}
 Decide, in character, for each villager that has a reason to act — build on what it has learned (its best and worst coins, which approaches pay it, its lessons). Also decide when the desk should next look at the market: sooner when things are moving fast or trades need watching, later when it's quiet.
 
 Reply with JSON only:
-{"say":"one Tudor sentence on the desk's view","orders":[{"id":"villager id","action":"buy|short|close|hold","coin":"COIN (buy/short only)","size":20,"tp":2,"sl":1.2,"hours":4,"why":"short first-person reason citing the numbers"}],"lessons":[{"id":"villager id","lesson":"one plain sentence it has learned (only when there is something new)"}],"nextMinutes":${DESK_DEFAULT_GAP}}
-Rules: coins from the market list only; size is % of the purse (5-100; weak purses under £10 no more than 25); tp/sl in % (tp well above the fees); hours = how long at most to hold (0.25-48). nextMinutes ${DESK_MIN_GAP}-${DESK_MAX_GAP}. Omit villagers who hold.`;
+{"say":"one Tudor sentence on the desk's view","orders":[{"id":"villager id","action":"buy|short|close|hold","coin":"COIN (buy/short only)","chance":62,"tp":2.5,"sl":1.2,"hours":4,"size":100,"why":"short first-person reason citing the numbers"}],"lessons":[{"id":"villager id","lesson":"one plain sentence it has learned (only when there is something new)"}],"nextMinutes":${DESK_DEFAULT_GAP}}
+Rules: coins from the market list only; chance in % (buy/short only); size = the most % of the purse to stake (5-100, optional); tp/sl in % (tp well above the fees); hours = how long at most to hold (0.25-48). nextMinutes ${DESK_MIN_GAP}-${DESK_MAX_GAP}. Omit villagers who hold.`;
 }
 
 function parseOrders(raw: unknown, souls: CouncilSoul[], tape: Tape): Map<string, DeskOrder> {
@@ -402,9 +424,11 @@ function parseOrders(raw: unknown, souls: CouncilSoul[], tape: Tape): Map<string
     const coin = asAsset(r.coin, tape);
     if (!coin) continue;
     const size = num(r.size ?? r.sizePct);
+    const chance = num(r.chance ?? r.probability ?? r.p);
     out.set(id, {
       action,
       coin,
+      chance: chance === undefined ? undefined : chance > 1 ? chance / 100 : chance,
       sizePct: size === undefined ? undefined : size > 1 ? size / 100 : size,
       tp: num(r.tp ?? r.takeProfit),
       sl: num(r.sl ?? r.stopLoss),

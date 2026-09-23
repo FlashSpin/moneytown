@@ -184,10 +184,10 @@ export function Ledger() {
       </section>
       <p className="hint">Sum of every purse, in pounds. Click a name to inspect.</p>
       <p className="hint">
-        Each soul trades the top 20 coins on the Kraken exchange at real, live prices — paper only, no
-        real money; each coin has its own stall. The
-        villagers are day-trading bots: every 5 minutes each one&apos;s own strategy trades on its
-        signals. The King advises and the villagers choose their strategies at a council every few
+        Each soul trades the top 50 coins on the Kraken exchange (the top 20 have stalls) at real, live prices — paper only, no
+        real money. The villagers are day-trading bots: every 5 minutes each one&apos;s own strategy trades on
+        its signals, and at the trading desk they place their own trades when they see a clear edge. Every trade
+        is sized by the Kelly criterion from what they have learned. The King advises and the villagers choose their strategies at a council every few
         hours. At dawn he taxes the day&apos;s banked profits.
       </p>
 

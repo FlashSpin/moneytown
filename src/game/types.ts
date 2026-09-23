@@ -23,6 +23,10 @@ export type Tape = {
   assets: Record<Asset, { usd: number; change24h: number; name?: string }>;
   /** The market's tradable coins in market-cap rank order (the parish's 20 shops). */
   coins?: Asset[];
+  /** The wider list the villagers scan for trades (the top 50 on the exchange), in rank order. */
+  scan?: Asset[];
+  /** Coins the crowd is searching for right now (CoinGecko trending), most searched first. */
+  trending?: Asset[];
 };
 
 export type SpeechLine = {
@@ -138,7 +142,7 @@ export type GameState = {
   /** When the villagers last traded (the 5-minute tick). */
   lastTickAt?: number;
   /** The trading desk: when the villagers next look at the market with the AI to place their own trades, and what it said last. */
-  desk?: { at: number; nextAt: number; say: string; orders: number; brain?: BrainInfo };
+  desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo };
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */

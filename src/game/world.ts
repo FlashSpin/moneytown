@@ -6,6 +6,7 @@
 import { FALLBACK_TAPE, KING_START, MEN_NAMES, POI, STAKE_GBP, TAX_DEFAULT, WOMEN_NAMES } from "./constants";
 import type { GameState, King, LogEntry, Subject } from "./types";
 import { wanderPoint } from "./town";
+import { TEMPERS } from "./trading";
 import { fakeWallet, mulberry32, pick, sumExchequer, uid } from "./wallets";
 
 export function withTotals<T extends { king: King; subjects: Subject[] }>(
@@ -45,9 +46,10 @@ export function makeSubject(rng: () => number, taken: Set<string>, grant: number
     wallet: fakeWallet(rng),
     balance: grant,
     dayStart: grant,
+    temper: pick(TEMPERS, rng),
     lastPnl: 0,
     lastAction: "idle",
-    lastFlavor: `${firstName} is staked £${STAKE_GBP}. Linked to an agent — trade well, or the tax hangs you.`,
+    lastFlavor: `${firstName} is staked £${STAKE_GBP} and trades by their own lights — the King advises, the parish council debates, and each decides.`,
     body: female ? "woman" : "man",
     x: start.x,
     y: start.y,

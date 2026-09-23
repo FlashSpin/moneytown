@@ -26,6 +26,7 @@ import {
   TAX_MAX,
 } from "./constants";
 import { ASSETS } from "./dawn";
+import { temperOf } from "./trading";
 import { needsSeal, parseCommand, parseFavor, parseTaxPercent, resolveBanish, type Command } from "./decree";
 import { defaultKingPolicy, petitionSummonCount } from "./economy";
 import { BRAIN_LABELS } from "./llm.server";
@@ -100,7 +101,9 @@ function rosterLines(state: GameState): string {
       const risk = s.balance < floor * 2 ? " — AT RISK of the gallows" : "";
       return `- ${s.firstName}: purse ${gbp(s.balance)}, today ${today >= 0 ? "+" : "-"}${gbp(Math.abs(today))}, ${pos}, ${days} day${
         days === 1 ? "" : "s"
-      } in the parish${s.advice ? `; your last order: "${s.advice}"` : ""}${risk}`;
+      } in the parish, ${s.temper ?? temperOf(s.id)} trader${s.plan ? `, own plan: "${s.plan}"` : ""}${
+        s.advice ? `; your last advice: "${s.advice}"${s.followsKing === false ? " (they went their own way)" : ""}` : ""
+      }${risk}`;
     })
     .join("\n");
 }
@@ -127,7 +130,7 @@ function kingPrompt(state: GameState, history: PetitionTurn[], message: string, 
     ? `The speaker BEARS THE ROYAL SEAL: they are the true power behind the throne. Carry out their commands faithfully — summon, banish named souls, set the tax (0-${Math.round(TAX_MAX * 100)}%), or set the favoured market.`
     : `The speaker is a COMMONER without the royal seal. They may ask for counsel, news of the villagers, or for new souls to be summoned. If they order a banishment, a new tax, or a new favoured market, refuse with regal disdain (only the bearer of the royal seal may command such things) and leave those fields empty.`;
 
-  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; you review their trades every few hours and order each one LONG, SHORT or FLAT on BTC, ETH or SOL with part of the purse at risk. Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which asset, long or short, and why). Keep it to at most 4 short sentences.
+  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; every few hours you advise each one, then they debate at their council and each decides its own trade (LONG, SHORT or FLAT on BTC, ETH or SOL, with part of the purse at risk). Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which asset, long or short, and why). Keep it to at most 4 short sentences.
 
 ${speaker}
 

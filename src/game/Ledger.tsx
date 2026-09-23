@@ -8,6 +8,7 @@ import { CouncilPanel } from "./CouncilPanel";
 import { RollPosition, TradeCard, TradingFloor } from "./TradingViews";
 import type { Position, Strategy } from "./strategies";
 import { TEMPER_DESCRIPTIONS, temperOf, type Temper } from "./trading";
+import type { Knowledge } from "./knowledge";
 import type { Tape } from "./types";
 import { formatPurse } from "./wallets";
 
@@ -32,6 +33,7 @@ type WalletTarget = {
   strategy?: Strategy;
   position?: Position;
   trades?: number;
+  knowledge?: Knowledge;
   favorAsset?: Asset;
 };
 
@@ -98,7 +100,13 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
       <p className="stat-num">{formatPurse(target.balance, tape)}</p>
       <PositionLine target={target} tape={tape} />
       {!target.king ? (
-        <TradeCard name={target.title} strategy={target.strategy} position={target.position} trades={target.trades} />
+        <TradeCard
+          name={target.title}
+          strategy={target.strategy}
+          position={target.position}
+          trades={target.trades}
+          knowledge={target.knowledge}
+        />
       ) : null}
       {!target.king ? (
         <p className="hint">
@@ -245,6 +253,7 @@ export function Ledger() {
             strategy: selected.strategy,
             position: selected.position,
             trades: selected.trades,
+            knowledge: selected.knowledge,
           }}
         />
       ) : selectedId === "king" ? (

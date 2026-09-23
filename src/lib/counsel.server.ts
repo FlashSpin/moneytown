@@ -10,18 +10,20 @@ const SYSTEM =
  * once the free quota runs out: Gemini (GEMINI_API_KEY, free tier), Groq
  * (GROQ_API_KEY, free tier), Claude (ANTHROPIC_API_KEY), Grok (XAI_API_KEY),
  * then keyless Pollinations. Each step is skipped when its key is unset.
- * Called from the daily-tick cron path (src/game/llm.server.ts) and from
+ * Called from the councils and the trading desk (src/game/llm.server.ts) and from
  * petitions to the King (src/lib/petition.ts), which is rate-limited per
  * visitor and capped per day there.
  */
-export async function askCounsel(prompt: string): Promise<
-  | { ok: true; text: string; source: CounselSource }
-  | { ok: false; error: string }
-> {
+export async function askCounsel(
+  prompt: string,
+  opts: { freeOnly?: boolean } = {},
+): Promise<{ ok: true; text: string; source: CounselSource } | { ok: false; error: string }> {
   const gemini = await tryGemini(prompt);
   if (gemini) return { ok: true, text: gemini, source: "gemini" };
   const groq = await tryGroq(prompt);
   if (groq) return { ok: true, text: groq, source: "groq" };
+  // Frequent callers (the trading desk, every few minutes) never spend a paid key.
+  if (opts.freeOnly) return { ok: false, error: "no free AI answered" };
   if (key("ANTHROPIC_API_KEY")) {
     const claude = await tryClaude(prompt);
     lastResult.set("claude", claude ? "ok" : "failed (see server log)");

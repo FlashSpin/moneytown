@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 /**
- * The trading tick: every villager's strategy reads the live prices and
- * trades by its rules. Called every 5 minutes by the GitHub Actions schedule
+ * The trading tick: every villager's strategy scans the live prices and
+ * trades by its rules, and when the villagers asked to look again, the
+ * trading desk lets them place their own trades with the AI. Called every 5 minutes by the GitHub Actions schedule
  * in .github/workflows/trading.yml with `Authorization: Bearer <CRON_SECRET>`.
  * `?force=1` (still behind the secret) skips the too-soon guard.
  */
@@ -23,14 +24,17 @@ async function trade(request: Request): Promise<Response> {
     return Response.json({ ok: true, skipped: true });
   }
   // A petition or review may land at the same moment; re-read and retry rather than overwrite it.
+  // The prices and the trading desk's answer are kept across retries, so the AI is asked once.
+  const memo = {};
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) row = await loadWorldRow();
     const before = row.state.trades?.[0]?.t ?? 0;
-    const next = await runTradeTick(row.state);
+    const next = await runTradeTick(row.state, memo);
     if (await saveWorldIfUnchanged(next, row.rev)) {
       const fills = (next.trades ?? []).filter((t) => t.t > before).length;
       const open = next.subjects.filter((s) => s.position).length;
-      return Response.json({ ok: true, fills, openTrades: open, prices: next.tape.source });
+      const desk = next.desk && next.desk.at === next.lastTickAt ? { orders: next.desk.orders, mind: next.desk.brain?.label ?? "none answered" } : null;
+      return Response.json({ ok: true, fills, openTrades: open, prices: next.tape.source, desk });
     }
   }
   return Response.json({ ok: false, error: "world kept changing; try again" }, { status: 409 });

@@ -26,7 +26,8 @@ import {
   TAX_MAX,
 } from "./constants";
 import { marketCoins, priceOf } from "./dawn";
-import { cleanStrategy, defaultStrategy, unrealized } from "./strategies";
+import { describeKnowledge } from "./knowledge";
+import { cleanStrategy, coinsLabel, defaultStrategy, unrealized } from "./strategies";
 import { formatCoinPrice } from "@/lib/market";
 import { temperOf } from "./trading";
 import { needsSeal, parseCommand, parseFavor, parseTaxPercent, resolveBanish, type Command } from "./decree";
@@ -94,7 +95,7 @@ function rosterLines(state: GameState): string {
   return living(state)
     .map((s) => {
       const strat = s.strategy
-        ? `runs a ${s.strategy.kind} strategy on ${s.strategy.coins.join("/")} (${Math.round(s.strategy.sizePct * 100)}% per trade, TP ${s.strategy.takeProfitPct}% SL ${s.strategy.stopLossPct}%)`
+        ? `runs a ${s.strategy.kind} strategy on ${coinsLabel(s.strategy)} (${Math.round(s.strategy.sizePct * 100)}% per trade, TP ${s.strategy.takeProfitPct}% SL ${s.strategy.stopLossPct}%)`
         : "no strategy yet";
       const open = s.position
         ? (() => {
@@ -103,7 +104,7 @@ function rosterLines(state: GameState): string {
           })()
         : "no open trade";
       const rec = s.record ? `${s.record.wins} wins/${s.record.losses} losses` : "no trades yet";
-      const pos = `${strat}, ${open}, ${s.trades ?? 0} fills today, ${rec}`;
+      const pos = `${strat}, ${open}, ${s.trades ?? 0} fills today, ${rec}, has learned: ${describeKnowledge(s.knowledge, gbp)}`;
       const today = s.balance - (s.dayStart ?? s.balance);
       const days = state.day - (s.bornDay ?? 0);
       // Within twice the gallows floor is close enough to warn about.
@@ -141,7 +142,7 @@ function kingPrompt(state: GameState, history: PetitionTurn[], message: string, 
     ? `The speaker BEARS THE ROYAL SEAL: they are the true power behind the throne. Carry out their commands faithfully — summon, banish named souls, set the tax (0-${Math.round(TAX_MAX * 100)}%), or set the favoured market.`
     : `The speaker is a COMMONER without the royal seal. They may ask for counsel, news of the villagers, or for new souls to be summoned. If they order a banishment, a new tax, or a new favoured market, refuse with regal disdain (only the bearer of the royal seal may command such things) and leave those fields empty.`;
 
-  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; every few hours you advise each one, then they debate at their council and each decides its own trade (LONG, SHORT or FLAT on one of the top coins traded on the Kraken exchange, each with its own stall in the town, with part of the purse at risk). Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which coin, long or short, and why). Keep it to at most 4 short sentences.
+  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; every few hours you advise each one on its day-trading strategy, then they debate at their council and each decides. Each villager's strategy trades every coin in the market (the top coins on the Kraken exchange, each with its own stall in the town) every 5 minutes, each may also place its own trades at the trading desk whenever it chooses, and each remembers how every trade went and learns from it. Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which coin, long or short, and why). Keep it to at most 4 short sentences.
 
 ${speaker}
 
@@ -163,7 +164,7 @@ Reply with JSON only:
 - banish: first names to remove from the parish (seal-bearer only; "the poorest" etc. means pick from the roll).
 - taxRate: a whole percent to set the tax to, "auto" to let yourself choose it each dawn again, or null for no change (seal-bearer only).
 - favorAsset: a coin symbol from the markets list to fix the favoured market, "auto" to choose it yourself each dawn again, or null (seal-bearer only).
-- strategies: to set villagers' day-trading strategies (seal-bearer only), e.g. [{"name":"Agnes","kind":"scalp|momentum|breakout|reversion|trend","coins":["SOL","ETH"],"size":20,"tp":1.5,"sl":1,"shorts":true}] — only the fields asked for; the rest stay as they are.`;
+- strategies: to set villagers' day-trading strategies (seal-bearer only), e.g. [{"name":"Agnes","kind":"scalp|momentum|breakout|reversion|trend","coins":["SOL","ETH"] or "all","size":20,"tp":1.5,"sl":1,"shorts":true}] — only the fields asked for; the rest stay as they are.`;
 }
 
 function parseDecision(text: string, coins: string[]): Omit<Decision, "brain"> | null {
@@ -221,7 +222,8 @@ function heuristicDecision(state: GameState, message: string, sovereign: boolean
     const kind = kindWord.startsWith("scalp") ? "scalp" : kindWord.includes("reversion") ? "reversion" : kindWord;
     const who = living(state).filter((x) => lower.includes(x.firstName.toLowerCase()));
     const market = marketCoins(state.tape);
-    const coins = market.filter((c) => new RegExp(`\\b${c.toLowerCase()}\\b`).test(lower));
+    const all = /\b(all|every|any) coins?\b|\bwhole market\b|\bevery coin\b/.test(lower);
+    const coins = all ? "all" : market.filter((c) => new RegExp(`\\b${c.toLowerCase()}\\b`).test(lower));
     if (!sovereign) return { ...none, say: "Only the bearer of the royal seal may set a soul's strategy." };
     if (!who.length) return { ...none, say: "Name the soul whose strategy thou wouldst set." };
     return {
@@ -331,8 +333,8 @@ function applyDecision(row: WorldRow, decision: Decision, sovereign: boolean) {
       const base = who.strategy ?? defaultStrategy(who.id, who.temper ?? temperOf(who.id), market);
       const strategy = cleanStrategy({ ...raw, note: raw.note ?? "By royal decree." }, base, market);
       subjects = subjects.map((x) => (x.id === who.id ? { ...x, strategy, plan: strategy.note } : x));
-      decrees.push(`${who.firstName} now runs a ${strategy.kind} strategy on ${strategy.coins.join("/")}.`);
-      crown(`By royal decree, ${who.firstName} trades a ${strategy.kind} strategy on ${strategy.coins.join("/")}.`);
+      decrees.push(`${who.firstName} now runs a ${strategy.kind} strategy on ${coinsLabel(strategy)}.`);
+      crown(`By royal decree, ${who.firstName} trades a ${strategy.kind} strategy on ${coinsLabel(strategy)}.`);
     }
   }
 

@@ -87,6 +87,8 @@ export type Subject = PurseFields & {
   trades?: number;
   cooldownUntil?: number;
   cooldownCoin?: Asset;
+  /** What it has learned from every trade it has closed, plus its written lessons (./knowledge.ts). */
+  knowledge?: import("./knowledge.ts").Knowledge;
 };
 
 export type King = PurseFields & {
@@ -135,6 +137,8 @@ export type GameState = {
   speechAt?: number;
   /** When the villagers last traded (the 5-minute tick). */
   lastTickAt?: number;
+  /** The trading desk: when the villagers next look at the market with the AI to place their own trades, and what it said last. */
+  desk?: { at: number; nextAt: number; say: string; orders: number; brain?: BrainInfo };
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */

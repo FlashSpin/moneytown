@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   cleanStrategy,
   defaultStrategy,
+  deskStep,
   entrySignal,
   FEE_RATE,
   stakeFor,
@@ -129,21 +130,20 @@ describe("a villager's trading step", () => {
 describe("choosing strategies", () => {
   const market = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "LINK"];
 
-  it("gives each temperament its own default, on different watchlists", () => {
+  it("gives each temperament its own default, across the whole market", () => {
     const a = defaultStrategy("s-aaa", "cautious", market);
     const b = defaultStrategy("s-zzz", "bold", market);
     assert.equal(a.kind, "reversion");
     assert.equal(a.shorts, false);
     assert.equal(b.kind, "breakout");
-    assert.ok(a.coins.length >= 1 && a.coins.length <= 3);
-    assert.ok(a.coins.every((c) => market.includes(c)));
+    assert.deepEqual(a.coins, [], "no watchlist: it scans every coin");
   });
 
   it("tidies a proposed strategy: known kind, listed coins, sane numbers", () => {
     const base = defaultStrategy("s-1", "trend", market);
     const s = cleanStrategy({ kind: "Scalp", coins: ["sol", "FAKE", "eth", "btc", "xrp"], size: 250, tp: 99, sl: 0.01 }, base, market);
     assert.equal(s.kind, "scalp");
-    assert.deepEqual(s.coins, ["SOL", "ETH", "BTC"]);
+    assert.deepEqual(s.coins, ["SOL", "ETH", "BTC", "XRP"], "any number of listed coins");
     assert.equal(s.sizePct, 1);
     assert.equal(s.takeProfitPct, 15);
     assert.equal(s.stopLossPct, 0.3);
@@ -155,5 +155,89 @@ describe("choosing strategies", () => {
     assert.deepEqual(s.coins, base.coins);
     assert.equal(s.takeProfitPct, 3);
     assert.equal(cleanStrategy("nonsense", base, market).kind, base.kind);
+  });
+
+  it('reads "all" (or an empty list) as the whole market', () => {
+    const base = { ...defaultStrategy("s-1", "trend", market), coins: ["SOL"] };
+    assert.deepEqual(cleanStrategy({ coins: "all" }, base, market).coins, []);
+    assert.deepEqual(cleanStrategy({ coins: ["ALL"] }, base, market).coins, []);
+    assert.deepEqual(cleanStrategy({ coins: [] }, base, market).coins, []);
+    assert.deepEqual(cleanStrategy({ coins: "eth, doge" }, base, market).coins, ["ETH", "DOGE"]);
+    assert.deepEqual(cleanStrategy({ kind: "scalp" }, base, market).coins, ["SOL"], "absent: unchanged");
+  });
+});
+
+describe("trading the whole market", () => {
+  const strat: Strategy = { kind: "momentum", coins: [], sizePct: 0.5, takeProfitPct: 2, stopLossPct: 1, shorts: true };
+  const base: Trader = { id: "s-1", firstName: "Agnes", balance: 100_000, strategy: strat };
+  const px: Record<string, number> = { BTC: 100, SOL: 102, DOGE: 101 };
+  const hist: Record<string, number[]> = { BTC: flat(7), SOL: [...flat(6), 102], DOGE: [...flat(6), 101] };
+  const priceOf = (c: string) => px[c] ?? 0;
+  const seriesOf = (c: string) => hist[c] ?? [];
+
+  it("scans every coin and takes the strongest signal", () => {
+    const { event } = tradeStep(base, priceOf, seriesOf, 1_000, 20_000, ["BTC", "SOL", "DOGE"]);
+    assert.equal(event?.coin, "SOL");
+  });
+
+  it("keeps to its focus coins when it has some", () => {
+    const focused = { ...base, strategy: { ...strat, coins: ["DOGE"] } };
+    assert.equal(tradeStep(focused, priceOf, seriesOf, 1_000, 20_000, ["BTC", "SOL", "DOGE"]).event?.coin, "DOGE");
+  });
+
+  it("learns from each close, and steers clear of coins that keep losing it money", () => {
+    let t: Trader = base;
+    for (let i = 0; i < 4; i++) {
+      t = tradeStep({ ...t, cooldownUntil: 0 }, priceOf, seriesOf, 1_000 + i, 20_000, ["SOL"]).trader;
+      t = tradeStep(t, () => 90, () => flat(10), 2_000 + i, 20_000, ["SOL"]).trader;
+    }
+    assert.deepEqual([t.knowledge?.coins.SOL?.w, t.knowledge?.coins.SOL?.l], [0, 4]);
+    assert.equal(t.knowledge?.approaches.momentum?.l, 4);
+    assert.ok(t.knowledge!.coins.SOL!.pnl < 0);
+    const next = tradeStep({ ...t, cooldownUntil: 0 }, priceOf, seriesOf, 9_000, 20_000, ["SOL", "DOGE"]);
+    assert.equal(next.event?.coin, "DOGE", "SOL is avoided now");
+  });
+});
+
+describe("a villager's own calls at the desk", () => {
+  const strat: Strategy = { kind: "reversion", coins: [], sizePct: 0.2, takeProfitPct: 2, stopLossPct: 1, shorts: false };
+  const base: Trader = { id: "s-1", firstName: "Agnes", balance: 100_000, strategy: strat };
+  const px: Record<string, number> = { SOL: 100, ETH: 50 };
+  const priceOf = (c: string) => px[c] ?? 0;
+
+  it("opens a trade of its own choosing, with its own targets", () => {
+    const { trader, events } = deskStep(base, { action: "short", coin: "SOL", sizePct: 0.3, tp: 3, sl: 1.5, hours: 2, why: "fading the pump" }, priceOf, 1_000, 20_000);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.own, true);
+    assert.equal(trader.position?.side, "short", "its own call may short even if its strategy doesn't");
+    assert.equal(trader.position?.stake, 30_000);
+    assert.deepEqual(trader.position?.own, { tp: 3, sl: 1.5, maxHoldH: 2 });
+    assert.equal(trader.position?.by, "own");
+  });
+
+  it("its own trade keeps its own targets and time limit", () => {
+    const open = deskStep(base, { action: "buy", coin: "SOL", tp: 5, sl: 3, hours: 1, why: "x" }, priceOf, 0, 20_000).trader;
+    assert.equal(tradeStep(open, () => 102, () => flat(20), 60_000, 20_000).event, null, "strategy TP of 2% doesn't apply");
+    const late = tradeStep(open, () => 101, () => flat(20), 3_600_000, 20_000);
+    assert.match(late.event!.reason, /time limit \(1h\)/);
+    assert.equal(late.trader.knowledge?.approaches.own?.w, 1);
+  });
+
+  it("switches trades: closes the old one, opens the new", () => {
+    const open = deskStep(base, { action: "buy", coin: "SOL", why: "x" }, priceOf, 0, 20_000).trader;
+    const { trader, events } = deskStep(open, { action: "buy", coin: "ETH", why: "better setup" }, priceOf, 1_000, 20_000);
+    assert.deepEqual(events.map((e) => e.action), ["close", "open"]);
+    assert.equal(trader.position?.coin, "ETH");
+  });
+
+  it("closes on its own call, and ignores orders it can't carry out", () => {
+    const open = deskStep(base, { action: "buy", coin: "SOL", why: "x" }, priceOf, 0, 20_000).trader;
+    const closed = deskStep(open, { action: "close", why: "taking it off" }, priceOf, 1_000, 20_000);
+    assert.equal(closed.events[0]?.reason, "taking it off");
+    assert.equal(closed.trader.position, undefined);
+    assert.equal(deskStep(base, { action: "close", why: "" }, priceOf, 0, 20_000).events.length, 0);
+    assert.equal(deskStep(base, { action: "buy", coin: "FAKE", why: "" }, priceOf, 0, 20_000).events.length, 0);
+    const held = deskStep(open, { action: "buy", coin: "SOL", why: "" }, priceOf, 1_000, 20_000);
+    assert.equal(held.events.length, 0, "already long SOL");
   });
 });

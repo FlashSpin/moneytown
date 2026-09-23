@@ -25,7 +25,11 @@ export function Game() {
     unlockAudio();
     void loadWorld();
     void useGame.getState().restoreSeal();
-    const id = setInterval(() => void loadWorld(), WORLD_POLL_MS);
+    void useGame.getState().loadLiveTape();
+    const id = setInterval(() => {
+      void loadWorld();
+      void useGame.getState().loadLiveTape();
+    }, WORLD_POLL_MS);
     return () => clearInterval(id);
   }, [loadWorld]);
 

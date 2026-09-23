@@ -24,10 +24,12 @@ import { formatGbp, gbpToSats, mulberry32, rentSats, satsToGbp, stakeSats, tapeG
 export async function runDailyTick(prev: GameState): Promise<GameState> {
   let tape = prev.tape;
   try {
-    tape = await loadTape();
+    tape = await loadTape(prev.subjects.map((s) => s.asset ?? ""));
   } catch {
     tape = { ...prev.tape, dark: true, source: "dark" };
   }
+  // Through a price outage the market keeps its stalls.
+  if (tape.dark && !tape.coins) tape = { ...tape, coins: prev.tape.coins };
 
   const now = Date.now();
   const day = prev.day + 1;
@@ -144,7 +146,8 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
  * the King's new orders. No dues are charged — those are settled at dawn.
  */
 export async function runReview(prev: GameState): Promise<GameState> {
-  const tape = await loadTape().catch(() => ({ ...prev.tape, dark: true, source: "dark" }));
+  let tape = await loadTape(prev.subjects.map((s) => s.asset ?? "")).catch(() => ({ ...prev.tape, dark: true, source: "dark" }));
+  if (tape.dark && !tape.coins) tape = { ...tape, coins: prev.tape.coins };
   const now = Date.now();
   const rng = mulberry32(prev.seed + Math.floor(now / 60_000));
   const history = appendHistory(prev.priceHistory, tape, now);

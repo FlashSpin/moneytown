@@ -1,5 +1,7 @@
-import { ASSET_POI, KING_DRAW, MAP_H, MAP_W, POI, SUBJECT_DRAW } from "./constants";
-import { ASSETS } from "./dawn";
+import { KING_DRAW, MAP_H, MAP_W, SUBJECT_DRAW } from "./constants";
+import { marketCoins } from "./dawn";
+import { formatCoinPrice } from "@/lib/market";
+import { AWNINGS, SHOP_SLOTS } from "./shops";
 import {
   DEFAULT_CAM,
   GALLOWS_BEAM,
@@ -271,31 +273,125 @@ function drawBubble(
   ctx.restore();
 }
 
-const ASSET_LABEL_COLOR: Record<string, string> = {
-  BTC: "rgba(139, 44, 44, 0.92)",
-  ETH: "rgba(63, 92, 58, 0.92)",
-  SOL: "rgba(107, 66, 38, 0.92)",
-};
+/** A market stall in world space: counter, posts, a striped awning, and the coin's badge. */
+function drawStall(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, coin: string) {
+  ctx.save();
+  // Shadow
+  ctx.fillStyle = "rgba(20, 14, 8, 0.28)";
+  ctx.beginPath();
+  ctx.ellipse(x, y + 8, 38, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Posts
+  ctx.fillStyle = "#4a2f1a";
+  ctx.fillRect(x - 31, y - 44, 4, 46);
+  ctx.fillRect(x + 27, y - 44, 4, 46);
+  // Counter
+  ctx.fillStyle = "#7a4e2d";
+  ctx.fillRect(x - 34, y - 16, 68, 20);
+  ctx.fillStyle = "#5c3a21";
+  ctx.fillRect(x - 34, y - 2, 68, 6);
+  ctx.fillStyle = "#9a6a42";
+  ctx.fillRect(x - 36, y - 19, 72, 4);
+  // Awning: alternating stripes of the stall's colour and cream, with a scalloped edge.
+  const top = y - 58;
+  const bottom = y - 38;
+  for (let i = 0; i < 6; i++) {
+    const x0 = x - 38 + i * (76 / 6);
+    ctx.fillStyle = i % 2 === 0 ? color : "#efe0bd";
+    ctx.beginPath();
+    ctx.moveTo(x0 + 3, top);
+    ctx.lineTo(x0 + 76 / 6 + 3, top);
+    ctx.lineTo(x0 + 76 / 6, bottom);
+    ctx.lineTo(x0, bottom);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x0 + 76 / 12, bottom, 76 / 12, 0, Math.PI);
+    ctx.fill();
+  }
+  ctx.strokeStyle = "rgba(44, 36, 22, 0.55)";
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(x - 38, top, 76, bottom - top);
+  // Coin badge on the counter
+  ctx.beginPath();
+  ctx.arc(x, y - 7, 10, 0, Math.PI * 2);
+  ctx.fillStyle = "#d9b24a";
+  ctx.fill();
+  ctx.strokeStyle = "#8a6a1e";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = "#3a2a0e";
+  ctx.font = `700 ${coin.length > 3 ? 6 : 7}px "IBM Plex Mono", monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(coin.slice(0, 5), x, y - 6.5);
+  ctx.restore();
+}
 
-/** Each tradable asset has its own building — label it so a viewer can tell them apart. */
-function drawAssetLabels(ctx: CanvasRenderingContext2D, scale: number, ox: number, oy: number) {
-  for (const asset of ASSETS) {
-    const p = POI[ASSET_POI[asset]];
-    const scr = worldToScreen(p.x, p.y, scale, ox, oy);
-    const topY = scr.y - 92 * scale;
+/** Price signs above every stall, in screen space so they stay legible at any zoom. */
+function drawShopSigns(
+  ctx: CanvasRenderingContext2D,
+  scale: number,
+  ox: number,
+  oy: number,
+  world: Tape,
+  live: Tape | null,
+) {
+  const coins = marketCoins(world).slice(0, SHOP_SLOTS.length);
+  const tape = live && !live.dark ? live : world;
+  const compact = scale < 0.6;
+  coins.forEach((coin, i) => {
+    const slot = SHOP_SLOTS[i]!;
+    const info = tape.assets[coin] ?? world.assets[coin];
+    const scr = worldToScreen(slot.x, slot.y - 60, scale, ox, oy);
+    const price = tape.dark ? "—" : formatCoinPrice(info?.usd ?? 0);
+    const chg = info?.change24h ?? 0;
+    const arrow = chg >= 0 ? "▲" : "▼";
     ctx.save();
-    ctx.font = '700 11px "Cinzel", "Times New Roman", serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const w = ctx.measureText(asset).width + 18;
-    const h = 20;
-    roundRect(ctx, scr.x - w / 2, topY - h / 2, w, h, h / 2);
-    ctx.fillStyle = ASSET_LABEL_COLOR[asset] ?? "rgba(74, 61, 42, 0.9)";
-    ctx.fill();
-    ctx.fillStyle = "#f4e8c8";
-    ctx.fillText(asset, scr.x, topY + 1);
+    if (compact) {
+      // Small screens: a narrow two-line badge, neighbours staggered so none overlap.
+      const levels = i >= 11 ? 3 : 2;
+      const lift = ((i >= 11 ? i - 11 : i) % levels) * 22;
+      ctx.font = '700 8px "IBM Plex Mono", monospace';
+      const w = Math.max(ctx.measureText(coin).width, ctx.measureText(price).width) + 6;
+      const h = 20;
+      const y = scr.y - h / 2 - 2 - lift;
+      roundRect(ctx, scr.x - w / 2, y - h / 2, w, h, 4);
+      ctx.fillStyle = AWNINGS[i] ?? "#4a3d2a";
+      ctx.globalAlpha = 0.94;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#f4e8c8";
+      ctx.fillText(coin, scr.x, y - 4);
+      ctx.fillStyle = tape.dark ? "#f4e8c8" : chg >= 0 ? "#c9ecb4" : "#ffc2b8";
+      ctx.fillText(price, scr.x, y + 5);
+    } else {
+      const line2 = tape.dark ? price : `${price} ${arrow}${Math.abs(chg).toFixed(1)}%`;
+      ctx.font = '700 10px "IBM Plex Mono", monospace';
+      const w = Math.max(ctx.measureText(line2).width, ctx.measureText(coin).width) + 12;
+      const h = 28;
+      // The bottom yards pack stalls closer: alternate their signs' heights.
+      const lift = i >= 11 && (i - 11) % 2 === 1 ? 32 : 0;
+      const y = scr.y - h / 2 - 4 - lift;
+      roundRect(ctx, scr.x - w / 2, y - h / 2, w, h, 6);
+      ctx.fillStyle = AWNINGS[i] ?? "#4a3d2a";
+      ctx.globalAlpha = 0.95;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "rgba(244, 232, 200, 0.55)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = "#f4e8c8";
+      ctx.font = '700 10px "Cinzel", "Times New Roman", serif';
+      ctx.fillText(coin, scr.x, y - 6);
+      ctx.font = '600 9.5px "IBM Plex Mono", monospace';
+      ctx.fillStyle = tape.dark ? "#f4e8c8" : chg >= 0 ? "#c9ecb4" : "#ffc2b8";
+      ctx.fillText(line2, scr.x, y + 7);
+    }
     ctx.restore();
-  }
+  });
 }
 
 function drawOverlays(
@@ -383,6 +479,8 @@ export function drawTown(
     subjects: Subject[];
     selectedId: string | null;
     tape: Tape;
+    /** Fresher prices for the shop signs (polled every minute); the stalls follow `tape.coins`. */
+    liveTape?: Tape | null;
     speech: SpeechLine[];
     cam?: Cam;
     viewW: number;
@@ -412,6 +510,12 @@ export function drawTown(
       draw: () => drawProp(ctx, img, p),
     });
   }
+  marketCoins(opts.tape)
+    .slice(0, SHOP_SLOTS.length)
+    .forEach((coin, i) => {
+      const slot = SHOP_SLOTS[i]!;
+      drawables.push({ y: slot.y, draw: () => drawStall(ctx, slot.x, slot.y, AWNINGS[i] ?? "#6b4226", coin) });
+    });
   drawables.push({
     y: opts.king.y,
     draw: () =>
@@ -447,7 +551,7 @@ export function drawTown(
     ctx.fillRect(0, 0, viewW, viewH);
   }
 
-  drawAssetLabels(ctx, scale, ox, oy);
+  drawShopSigns(ctx, scale, ox, oy, opts.tape, opts.liveTape ?? null);
   drawOverlays(ctx, opts, scale, ox, oy);
 
   return { scale, ox, oy };

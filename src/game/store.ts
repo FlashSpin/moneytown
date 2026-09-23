@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import { getWorldState } from "@/lib/world";
 import { petitionTheKing, presentSeal } from "@/lib/petition";
+import { fetchTape } from "@/lib/tape";
 import { playDawn, playHang, playShout, playSpawn, playTalk } from "./audio";
 import { ambientTalk, trimSpeech } from "./brains";
 import { HANG_SECS, POI, SHOUT_LIFE, WALK_SPEED } from "./constants";
 import { facing, GALLOWS_DROP, GALLOWS_WATCH, moveToward, wanderPoint } from "./town";
-import type { GameState, King, Subject } from "./types";
+import type { GameState, King, Subject, Tape } from "./types";
 import { freshWorld } from "./world";
 import { uid } from "./wallets";
 
@@ -22,6 +23,8 @@ type ViewState = {
   seal: string | null;
   /** True once the server has accepted `seal`. */
   sovereign: boolean;
+  /** Live prices for the shop signs, refreshed every minute (display only — trades use the world's tape). */
+  liveTape: Tape | null;
   /** Seal-bearer only: how each AI provider fared on the last petition. */
   diagnostics: { provider: string; configured: boolean; last: string | null }[] | null;
   selectedId: string | null;
@@ -35,6 +38,7 @@ type ViewState = {
 
 type Actions = {
   loadWorld: () => Promise<void>;
+  loadLiveTape: () => Promise<void>;
   petition: (message: string) => Promise<void>;
   /** Try a seal passphrase; resolves to whether the server accepted it. */
   offerSeal: (passphrase: string) => Promise<boolean>;
@@ -167,6 +171,7 @@ export const useGame = create<Store>((set, get) => ({
   seal: null,
   sovereign: false,
   diagnostics: null,
+  liveTape: null,
   selectedId: null,
   loading: true,
   synced: false,
@@ -180,6 +185,15 @@ export const useGame = create<Store>((set, get) => ({
       if (patch) set(patch);
     } catch {
       set({ loading: false, error: "Could not reach the parish. Retrying shortly." });
+    }
+  },
+
+  loadLiveTape: async () => {
+    try {
+      const tape = await fetchTape();
+      if (!tape.dark) set({ liveTape: tape });
+    } catch {
+      // Keep the last prices; the world's own tape still stands behind them.
     }
   },
 

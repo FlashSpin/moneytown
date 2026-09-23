@@ -8,10 +8,16 @@
  * anyone left below the floor hangs.
  */
 import { SIZE_DEFAULT, SIZE_MIN, SIZE_WEAK_MAX, WEAK_PURSE_SHARE } from "./constants.ts";
-import { ASSETS, type Asset, type Side } from "./dawn.ts";
+import type { Asset, Side } from "./dawn.ts";
 
 export type Order = { side: Side; asset: Asset; size: number; note: string };
-export type PriceSample = { t: number } & Record<Asset, number>;
+/** One price snapshot per review. Older saves stored BTC/ETH/SOL as top-level fields. */
+export type PriceSample = { t: number; prices?: Record<Asset, number>; BTC?: number; ETH?: number; SOL?: number };
+
+export function samplePrice(h: PriceSample, asset: Asset): number {
+  const legacy = (h as Record<string, unknown>)[asset];
+  return h.prices?.[asset] ?? (typeof legacy === "number" ? legacy : 0);
+}
 
 /** P&L of a position from `entryUsd` to `nowUsd`. A position can lose at most what it put at risk. */
 export function markToMarket(p: { balance: number; side?: Side; size?: number; entryUsd?: number; nowUsd: number }): number {
@@ -53,11 +59,15 @@ export function settleDay(p: { balance: number; dayStart: number; taxRate: numbe
   return { profit, tithe, rentPaid, balance, hanged: balance < p.floor };
 }
 
-/** % change of an asset across the kept history (oldest sample → now), or null if unknown. */
-export function trendPct(history: PriceSample[], asset: Asset, nowUsd: number): number | null {
-  const first = history.find((h) => h[asset] > 0);
-  if (!first || !(nowUsd > 0)) return null;
-  return ((nowUsd - first[asset]) / first[asset]) * 100;
+/** History shorter than this says nothing a 24h change doesn't say better. */
+export const TREND_MIN_SPAN_MS = 3 * 3_600_000;
+
+/** % change of an asset across the kept history (oldest sample → now), or null if unknown or too short. */
+export function trendPct(history: PriceSample[], asset: Asset, nowUsd: number, now = Date.now()): number | null {
+  const first = history.find((h) => samplePrice(h, asset) > 0);
+  if (!first || !(nowUsd > 0) || now - first.t < TREND_MIN_SPAN_MS) return null;
+  const then = samplePrice(first, asset);
+  return ((nowUsd - then) / then) * 100;
 }
 
 /**
@@ -70,9 +80,9 @@ export function momentumOrder(
   history: PriceSample[],
 ): Order {
   let best: { asset: Asset; pct: number } | null = null;
-  for (const a of ASSETS) {
-    if (!(assets[a].usd > 0)) continue;
-    const pct = trendPct(history, a, assets[a].usd) ?? assets[a].change24h;
+  for (const a of Object.keys(assets)) {
+    if (!(assets[a]!.usd > 0)) continue;
+    const pct = trendPct(history, a, assets[a]!.usd) ?? assets[a]!.change24h;
     if (!best || Math.abs(pct) > Math.abs(best.pct)) best = { asset: a, pct };
   }
   if (!best || Math.abs(best.pct) < 1) {

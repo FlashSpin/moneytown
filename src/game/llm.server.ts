@@ -11,7 +11,7 @@
  */
 import { askCounsel, type CounselSource } from "@/lib/counsel.server";
 import { HANG_BELOW_GBP, RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
-import { ASSETS, type Asset, type Side } from "./dawn";
+import { marketCoins, priceOf, type Asset, type Side } from "./dawn";
 import { trimSpeech } from "./brains";
 import { clampSize, TEMPER_DESCRIPTIONS, temperOf, trendPct, type Order, type PriceSample, type Temper } from "./trading";
 import type { BrainInfo, SpeechLine, Tape } from "./types";
@@ -78,19 +78,21 @@ function asSide(v: unknown): Side | null {
   return SIDES.includes(s as Side) ? (s as Side) : null;
 }
 
-function asAsset(v: unknown): Asset | null {
+/** A coin the market lists and prices right now, or null. */
+function asAsset(v: unknown, tape: Tape): Asset | null {
   const s = String(v ?? "").toUpperCase();
-  return (ASSETS as string[]).includes(s) ? (s as Asset) : null;
+  return priceOf(tape, s) > 0 ? s : null;
 }
 
 function marketsBlock(tape: Tape, history: PriceSample[]): string {
-  return ASSETS.map((a) => {
+  return marketCoins(tape).map((a, i) => {
     const info = tape.assets[a];
-    if (!(info.usd > 0)) return `- ${a}: no price today — do not trade it`;
+    if (!info || !(info.usd > 0)) return `- ${a}: no price today — do not trade it`;
     const trend = trendPct(history, a, info.usd);
     const span = history.length ? `${Math.round((Date.now() - history[0]!.t) / 3_600_000)}h` : "";
     const sign = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
-    return `- ${a}: $${Math.round(info.usd).toLocaleString("en-US")}, 24h ${sign(info.change24h)}${
+    const price = info.usd >= 100 ? Math.round(info.usd).toLocaleString("en-US") : info.usd >= 1 ? info.usd.toFixed(2) : info.usd.toPrecision(4);
+    return `- #${i + 1} ${a}${info.name && info.name.toUpperCase() !== a ? ` (${info.name})` : ""}: $${price}, 24h ${sign(info.change24h)}${
       trend !== null && span ? `, over the last ${span} ${sign(trend)}` : ""
     }`;
   }).join("\n");
@@ -127,7 +129,7 @@ function councilPrompt(input: {
   const tax = Math.round(input.taxRate * 100);
   const rows = rosterRows(input.souls, gbp);
   const dawnAsk = input.dawn
-    ? `,"taxRate":${tax},"favorAsset":"BTC|ETH|SOL"`
+    ? `,"taxRate":${tax},"favorAsset":"a coin symbol from the market list"`
     : "";
   const dawnRules = input.dawn
     ? `\n- It is dawn: also set taxRate (whole %, ${Math.round(TAX_MIN * 100)}-${Math.round(TAX_MAX * 100)}; it is taken from each villager's daily PROFIT only, so a fair rate fills the treasury without starving them)${
@@ -138,7 +140,7 @@ function councilPrompt(input: {
   return `Day ${input.day}${input.dawn ? ", dawn" : ", a review during the day"}. You are the KING of Ledgerford and master of its trading house. Every villager is an independent trading agent staked from your treasury, with its own temperament. Every few hours you study the markets and ADVISE each villager; they then hold a council, debate your advice, and each decides its own trade — most follow you, some will not.
 
 How the money works:
-- A position is LONG (gains when the asset rises), SHORT (gains when it falls) or FLAT (no risk), on BTC, ETH or SOL.
+- A position is LONG (gains when the coin rises), SHORT (gains when it falls) or FLAT (no risk), on ONE coin from the market list below — the top coins by market cap on the Kraken exchange, each with its own stall in the town.
 - size = share of the purse at risk (10-100). P&L = purse x size x price move. Each review re-marks positions at the current price.
 - Each dawn: your tax takes ${tax}% of the day's PROFIT only (nothing on a losing day), then £${RENT_GBP} upkeep. A purse below £${HANG_BELOW_GBP} hangs.
 
@@ -146,7 +148,7 @@ Your goal: grow the parish's total wealth while keeping every soul alive. Advise
 - Follow clear trends; don't fight them. If nothing moves decisively, go FLAT or small — sitting out costs only the upkeep.
 - Cut positions that are losing against the trend; let winners run (keep them unchanged).
 - Size by conviction: 20-40 normally, up to 60 only on a strong, confirmed trend. Weak purses (under £10) no more than 25.
-- Spread the parish across assets when conviction is similar; don't put every soul on one bet.
+- Spread the parish across coins when conviction is similar; don't put every soul on one bet. Smaller coins move more — size them smaller.
 - Don't flip positions on noise — every change should have a reason.${
     input.favorFixed ? `\n- The bearer of the royal seal favours ${input.favorAsset}: lean towards it where the trend allows.` : ""
   }
@@ -160,7 +162,7 @@ Villagers (id | name | temperament | purse | today's P&L | current position | re
 ${rows || "(none)"}
 
 Reply with JSON only:
-{"say":"your plan for the parish, one or two Tudor sentences naming the markets and why","orders":[{"id":"...","side":"long|short|flat","asset":"BTC|ETH|SOL","size":30,"note":"one short Tudor sentence of advice to this villager with the reason"}]${dawnAsk}}
+{"say":"your plan for the parish, one or two Tudor sentences naming the markets and why","orders":[{"id":"...","side":"long|short|flat","asset":"COIN SYMBOL from the list","size":30,"note":"one short Tudor sentence of advice to this villager with the reason"}]${dawnAsk}}
 Rules: one piece of advice per villager id above. Never ask for keys. Amounts in pounds.${dawnRules}`;
 }
 
@@ -206,11 +208,12 @@ function parseOrders(raw: unknown, ids: Set<string>, tape: Tape): Map<string, Or
     if (!ids.has(id) || orders.has(id)) continue;
     const side = asSide(r.side);
     if (!side) continue;
-    const asset = asAsset(r.asset) ?? "BTC";
-    const priced = tape.assets[asset].usd > 0 && !tape.dark;
+    const asset = asAsset(r.asset, tape);
+    // An unknown or unpriced coin can't be traded: sitting out is fine, anything else is no valid order.
+    if (!asset && side !== "flat") continue;
     orders.set(id, {
-      side: priced ? side : "flat",
-      asset,
+      side: tape.dark ? "flat" : side,
+      asset: asset ?? "BTC",
       size: clampSize(r.size),
       note: String(r.note ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
     });
@@ -237,7 +240,7 @@ export async function kingCouncil(input: Parameters<typeof councilPrompt>[0]): P
       orders: parseOrders(obj.orders, ids, input.tape),
       talks: [],
       taxRate: input.dawn && Number.isFinite(taxN) ? clamp(taxN > 1 ? taxN / 100 : taxN, TAX_MIN, TAX_MAX) : undefined,
-      favorAsset: input.dawn ? (asAsset(obj.favorAsset) ?? undefined) : undefined,
+      favorAsset: input.dawn ? (asAsset(obj.favorAsset, input.tape) ?? undefined) : undefined,
       brain: { kind: res.source, label: BRAIN_LABELS[res.source] },
     };
   } catch {
@@ -292,7 +295,7 @@ Hold the council:
 Rules: size is % of the purse at risk (10-100); weak purses (under £10) risk no more than 25; no trading an asset with no price. Stay in period English, but speak plainly about the trades. Never ask for keys.
 
 Reply with JSON only:
-{"discussion":[{"from":"villager id or king","to":"villager id, king or null","text":"one line"}],"decisions":[{"id":"...","side":"long|short|flat","asset":"BTC|ETH|SOL","size":30,"plan":"first-person reason, one sentence","followsKing":true}]}`;
+{"discussion":[{"from":"villager id or king","to":"villager id, king or null","text":"one line"}],"decisions":[{"id":"...","side":"long|short|flat","asset":"COIN SYMBOL from the list","size":30,"plan":"first-person reason, one sentence","followsKing":true}]}`;
 }
 
 export async function parishCouncil(input: Parameters<typeof parishPrompt>[0]): Promise<ParishCouncil | null> {

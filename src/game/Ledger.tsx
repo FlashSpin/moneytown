@@ -1,6 +1,7 @@
 import { Crown, ScrollText } from "lucide-react";
 import { HANG_BELOW_GBP, LIVING_CAP, RENT_GBP } from "./constants";
 import { KingAudience } from "./KingAudience";
+import { marketCoins } from "./dawn";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
 import { CouncilPanel } from "./CouncilPanel";
@@ -53,6 +54,21 @@ function PositionLine({ target, tape }: { target: WalletTarget; tape: Tape }) {
     <p>
       {target.side.toUpperCase()} {target.asset ?? "BTC"} with {Math.round((target.size ?? 0.4) * 100)}% of the purse
       {todayLine}
+    </p>
+  );
+}
+
+function MarketLine() {
+  const world = useGame((s) => s.tape);
+  const live = useGame((s) => s.liveTape);
+  const tape = live && !live.dark ? live : world;
+  if (tape.dark) return <p className="hint market-line">Market: prices unavailable — villagers sit out until they return.</p>;
+  const n = marketCoins(world).length;
+  const mins = tape.fetchedAt ? Math.max(0, Math.round((Date.now() - tape.fetchedAt) / 60_000)) : null;
+  return (
+    <p className="hint market-line">
+      Market: {n} coins, one stall each · prices from <strong>{tape.source}</strong>
+      {mins !== null ? ` · ${mins < 1 ? "just now" : `${mins} min ago`}` : ""}
     </p>
   );
 }
@@ -159,7 +175,8 @@ export function Ledger() {
       </section>
       <p className="hint">Sum of every purse, in pounds. Click a name to inspect.</p>
       <p className="hint">
-        Each soul trades real, live crypto prices (BTC/ETH/SOL) — paper only, no real money. The
+        Each soul trades the top 20 coins on the Kraken exchange at real, live prices — paper only, no
+        real money; each coin has its own stall. The
         King advises every few hours; the villagers debate strategy at their council and each decides
         its own trade. At dawn he taxes the day&apos;s profits.
       </p>
@@ -168,6 +185,8 @@ export function Ledger() {
         <p className="section-label">King's tax on profits — {taxByDecree ? "by royal decree" : "set by the crown"}</p>
         <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
       </section>
+
+      <MarketLine />
 
       <KingAudience />
 

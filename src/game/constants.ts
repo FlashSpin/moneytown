@@ -1,4 +1,3 @@
-import type { Asset } from "./dawn.ts";
 
 /**
  * Sats — there's no more player "Give" button to fund the treasury by hand,
@@ -114,10 +113,3 @@ export const POI = {
   square: { x: 920, y: 560 },
   kingStand: { x: 900, y: 310 },
 } as const;
-
-/** Each tradable asset has its own building — a trading villager walks there. */
-export const ASSET_POI: Record<Asset, keyof typeof POI> = {
-  BTC: "stall",
-  ETH: "stall2",
-  SOL: "table",
-};

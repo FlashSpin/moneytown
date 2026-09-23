@@ -11,7 +11,9 @@
  * With no AI, the momentum rule stands in for the King and each villager
  * applies its own temperament to his advice (src/game/trading.ts).
  */
-import { ASSET_POI, LIVING_CAP, POI, PRICE_HISTORY } from "./constants";
+import { LIVING_CAP, PRICE_HISTORY } from "./constants";
+import { marketCoins, priceOf } from "./dawn";
+import { standAt } from "./shops";
 import { heuristicTalks } from "./brains";
 import { kingCouncil, parishCouncil, type Council, type CouncilSoul, type ParishCouncil } from "./llm.server";
 import { wanderPoint } from "./town";
@@ -36,7 +38,7 @@ export function isLiving(s: Subject): boolean {
 export function markParish(subjects: Subject[], tape: Tape): Subject[] {
   return subjects.map((s) => {
     if (!isLiving(s) || !s.side || s.side === "flat" || !s.asset) return s;
-    const nowUsd = tape.dark ? 0 : tape.assets[s.asset].usd;
+    const nowUsd = tape.dark ? 0 : priceOf(tape, s.asset);
     const pnl = markToMarket({ balance: s.balance, side: s.side, size: s.size, entryUsd: s.entryUsd, nowUsd });
     return {
       ...s,
@@ -50,7 +52,9 @@ export function markParish(subjects: Subject[], tape: Tape): Subject[] {
 
 export function appendHistory(history: PriceSample[] | undefined, tape: Tape, now: number): PriceSample[] {
   if (tape.dark) return history ?? [];
-  const sample: PriceSample = { t: now, BTC: tape.assets.BTC.usd, ETH: tape.assets.ETH.usd, SOL: tape.assets.SOL.usd };
+  const prices: Record<string, number> = {};
+  for (const [coin, info] of Object.entries(tape.assets)) if (info.usd > 0) prices[coin] = info.usd;
+  const sample: PriceSample = { t: now, prices };
   return [...(history ?? []), sample].slice(-PRICE_HISTORY);
 }
 
@@ -137,21 +141,21 @@ export async function councilAndOrders(
     if (decided.followsKing) followers++;
     else ownWay++;
     const changed = side !== s.side || decided.asset !== s.asset || size !== s.size;
-    const dest = side !== "flat" ? POI[ASSET_POI[decided.asset]] : wanderPoint(opts.rng);
+    const dest = side !== "flat" ? standAt(decided.asset, marketCoins(tape)) : wanderPoint(opts.rng);
     return {
       ...s,
       temper,
       side,
       asset: decided.asset,
       size,
-      entryUsd: side !== "flat" ? tape.assets[decided.asset].usd : undefined,
+      entryUsd: side !== "flat" ? priceOf(tape, decided.asset) : undefined,
       advice: told.note || s.advice,
       plan: decided.note || s.plan,
       followsKing: decided.followsKing,
       ...(changed
         ? {
-            destX: dest.x + (opts.rng() - 0.5) * 40,
-            destY: dest.y + (opts.rng() - 0.5) * 28,
+            destX: dest.x + (opts.rng() - 0.5) * 36,
+            destY: dest.y + opts.rng() * 16,
             state: "walk" as const,
           }
         : {}),

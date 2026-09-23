@@ -19,8 +19,10 @@ export type Tape = {
   dark: boolean;
   source: string;
   fetchedAt: number;
-  /** Live price + 24h change per tradable asset — BTC mirrors the fields above. */
-  assets: Record<Asset, { usd: number; change24h: number }>;
+  /** Live price + 24h change per coin (BTC mirrors the fields above); `name` is the coin's full name. */
+  assets: Record<Asset, { usd: number; change24h: number; name?: string }>;
+  /** The market's tradable coins in market-cap rank order (the parish's 20 shops). */
+  coins?: Asset[];
 };
 
 export type SpeechLine = {
@@ -120,7 +122,7 @@ export type GameState = {
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
   /** Recent prices, one sample per review, oldest first — the King reads trends from it. */
-  priceHistory?: { t: number; BTC: number; ETH: number; SOL: number }[];
+  priceHistory?: import("./trading.ts").PriceSample[];
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset };
 };

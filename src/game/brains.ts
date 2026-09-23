@@ -44,7 +44,7 @@ const KING_ASIDES = [
 const ASSET_NOUN: Record<Asset, string> = { BTC: "Bitcoin", ETH: "Ether", SOL: "Solana" };
 
 export function kingFlavor(favorAsset: Asset): string {
-  return `The King commands the parish and favours ${ASSET_NOUN[favorAsset]} this day. His treasury opens new souls only while they trade well.`;
+  return `The King commands the parish and favours ${ASSET_NOUN[favorAsset] ?? favorAsset} this day. His treasury opens new souls only while they trade well.`;
 }
 
 function line(

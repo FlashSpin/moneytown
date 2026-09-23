@@ -85,6 +85,17 @@ describe("the King's fallback strategy", () => {
     assert.equal(o.side, "long");
   });
 
+  it("ignores a price history only minutes long, using the 24h move instead", () => {
+    const fresh = [{ t: Date.now() - 60_000, BTC: 100_000, ETH: 3_000, SOL: 150 }];
+    assert.equal(momentumOrder(assets, fresh).asset, "ETH");
+  });
+
+  it("reads new-style samples with prices for any coin", () => {
+    const history = [{ t: 0, prices: { DOGE: 0.1, BTC: 100_000 } }];
+    const o = momentumOrder({ BTC: { usd: 100_000, change24h: 0 }, DOGE: { usd: 0.15, change24h: 0 } }, history);
+    assert.deepEqual([o.asset, o.side], ["DOGE", "long"]);
+  });
+
   it("sits out when nothing moves", () => {
     const calm = {
       BTC: { usd: 100_000, change24h: 0.2 },

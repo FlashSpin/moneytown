@@ -108,6 +108,7 @@ export function TownCanvas() {
           viewH,
           cam,
           tape: s.tape,
+          liveTape: s.liveTape,
           speech: s.speech,
         });
       }

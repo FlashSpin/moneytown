@@ -28,20 +28,14 @@ export const TOWN_PROPS: PropDef[] = [
   { id: "castle", src: "/assets/props/castle.png", x: 900, y: 248, w: 250, h: 268 },
   { id: "house", src: "/assets/props/house.png", x: 250, y: 236, w: 168, h: 220 },
   { id: "cottage", src: "/assets/props/cottage.png", x: 1510, y: 870, w: 170, h: 192 },
-  { id: "stall", src: "/assets/props/stall.png", x: 198, y: 575, w: 150, h: 160 },
-  { id: "stall2", src: "/assets/props/stall.png", x: 780, y: 915, w: 145, h: 155 },
   { id: "gallows", src: "/assets/props/gallows.png", x: 1595, y: 500, w: 132, h: 190 },
-  { id: "table", src: "/assets/props/table.png", x: 560, y: 830, w: 118, h: 104 },
 ];
 
 export const BLOCKERS: Blocker[] = [
   { x: 790, y: 150, w: 220, h: 92 },
   { x: 175, y: 145, w: 145, h: 80 },
   { x: 1435, y: 790, w: 150, h: 70 },
-  { x: 130, y: 510, w: 130, h: 55 },
-  { x: 715, y: 850, w: 130, h: 52 },
   { x: 1535, y: 430, w: 120, h: 55 },
-  { x: 510, y: 780, w: 100, h: 42 },
   { x: 410, y: 515, w: 90, h: 48 },
 ];
 
@@ -79,14 +73,12 @@ export function wanderPoint(rng: () => number): { x: number; y: number } {
   const spots = [
     POI.square,
     POI.well,
-    POI.stall,
-    POI.stall2,
-    POI.table,
     POI.cottage,
-    { x: 700, y: 480 },
-    { x: 1100, y: 620 },
-    { x: 980, y: 740 },
-    { x: 640, y: 360 },
+    { x: 700, y: 520 },
+    { x: 1100, y: 540 },
+    { x: 980, y: 780 },
+    { x: 800, y: 780 },
+    { x: 1050, y: 720 },
   ];
   const s = spots[Math.floor(rng() * spots.length)] ?? POI.square;
   return {

@@ -17,6 +17,7 @@ import { kingFlavor } from "./brains";
 import { priceOf } from "./dawn";
 import { councilStrategies, isLiving, wealthLine } from "./review.server";
 import { Journal, KING, MARKET, villagerAccount, withPostings } from "./ledger";
+import { advanceSeason, checkMilestones, parishWealth, SEASONS_KEPT, type DawnBook } from "./progress";
 import { unrealized } from "./strategies";
 import { coinsNeeded } from "./trade.server";
 import { settleDay } from "./trading";
@@ -56,6 +57,8 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   const floor = gbpToSats(HANG_BELOW_GBP, tapeGbp(tape));
   let kingBalance = prev.king.balance;
   const journal = new Journal({ at: now, day }, "dawn");
+  const book: DawnBook = { day: prev.day, banked: 0, tax: 0, upkeep: 0, stakes: 0, gallows: 0 };
+  let hangedToday = 0;
   const settled: Subject[] = [];
   for (const sub of marked) {
     const dues = settleDay({
@@ -64,8 +67,12 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
       taxRate: prev.taxRate,
       rent,
       floor,
+      carry: sub.lossCarry,
     });
     kingBalance += dues.tithe + dues.rentPaid;
+    book.banked += dues.profit;
+    book.tax += dues.tithe;
+    book.upkeep += dues.rentPaid;
     journal.transfer(villagerAccount(sub.id), KING, dues.tithe, "tax", { memo: `${Math.round(prev.taxRate * 100)}% of the day's profit` });
     journal.transfer(villagerAccount(sub.id), KING, dues.rentPaid, "upkeep");
     // The gallows judge the whole purse, open trade included at today's price.
@@ -74,9 +81,13 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     const sign = dues.profit >= 0 ? "+" : "-";
     push(
       "subject",
-      `${sub.firstName}: ${sign}${gbp(Math.abs(dues.profit))} on the day; tax ${gbp(dues.tithe)}, upkeep ${gbp(dues.rentPaid)}.`,
+      `${sub.firstName}: ${sign}${gbp(Math.abs(dues.profit))} on the day; tax ${gbp(dues.tithe)}${
+        dues.offset > 0 ? ` (${gbp(dues.offset)} of the profit sheltered by earlier losses)` : ""
+      }, upkeep ${gbp(dues.rentPaid)}${dues.profit < 0 ? `; ${gbp(dues.carry)} of losses carried forward` : ""}.`,
     );
     if (hanged) {
+      hangedToday++;
+      book.gallows += Math.max(0, dues.balance + open);
       kingBalance += Math.max(0, dues.balance + open);
       // The purse goes to the crown, and its open trade is settled at today's price against the market.
       journal.transfer(villagerAccount(sub.id), KING, dues.balance, "gallows", { memo: `${sub.firstName} hanged` });
@@ -96,7 +107,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
         hangT: 0,
       });
     } else {
-      settled.push({ ...sub, balance: dues.balance, dayStart: dues.balance, trades: 0 });
+      settled.push({ ...sub, balance: dues.balance, dayStart: dues.balance, trades: 0, lossCarry: dues.carry || undefined });
     }
   }
 
@@ -114,6 +125,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     const child = makeSubject(rng, taken, stake, day);
     child.dayStart = stake;
     kingBalance -= stake;
+    book.stakes += stake;
     journal.transfer(KING, villagerAccount(child.id), stake, "stake", { memo: `${child.firstName} opened from the treasury` });
     settled.push(child);
     push("crown", `The King opens ${child.firstName} from the treasury, staked for trade.`);
@@ -133,6 +145,20 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   push("crown", flavor);
   push("system", review.summary);
   push("system", wealthLine(review.subjects, tape));
+  const net = book.tax + book.upkeep + book.gallows - book.stakes;
+  push(
+    "crown",
+    `The treasury's day: +${gbp(book.tax)} tax, +${gbp(book.upkeep)} upkeep${book.gallows ? `, +${gbp(book.gallows)} from the gallows` : ""}${
+      book.stakes ? `, -${gbp(book.stakes)} to stake new souls` : ""
+    } — ${net >= 0 ? "+" : "-"}${gbp(Math.abs(net))} in all. The parish ${book.banked >= 0 ? "banked" : "lost"} ${gbp(Math.abs(book.banked))} on the day.`,
+  );
+
+  // The season: the parish's objective, judged every few days on its whole wealth.
+  const px = (coin: string) => priceOf(tape, coin);
+  const wealth = parishWealth({ king: { ...prev.king, balance: kingBalance }, subjects: review.subjects }, px);
+  const seasonStep = advanceSeason(prev.season, { day, at: now, wealth, hangedToday, money: gbp });
+  for (const line of seasonStep.notes) push("crown", line);
+  const seasons = seasonStep.result ? [seasonStep.result, ...(prev.seasons ?? [])].slice(0, SEASONS_KEPT) : prev.seasons;
 
   const king: King = {
     ...prev.king,
@@ -142,7 +168,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     favorAsset,
   };
 
-  return withTotals({
+  const next: GameState = {
     ...withPostings(prev, journal.postings),
     day,
     tape,
@@ -150,13 +176,19 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     subjects: review.subjects,
     king,
     log,
+    season: seasonStep.season,
+    seasons,
+    lastDawn: book,
     seed: prev.seed + 17,
     brain,
     speech: review.speech,
     speechAt: now,
     council: review.record,
     lastReviewAt: now,
-  });
+  };
+  const reached = checkMilestones(next, now);
+  for (const line of reached.notes) log = pushLog({ day, log }, "crown", line);
+  return withTotals({ ...next, log, milestones: reached.milestones });
 }
 
 /**

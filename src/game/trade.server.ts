@@ -16,14 +16,19 @@ import { haltReason, riskBook, type Gate } from "./limits";
 import { standAt } from "./shops";
 import { marketExecutor } from "./execution";
 import { addLesson } from "./knowledge";
+import { checkMilestones } from "./progress";
+import { RANK_INFO, rankChange, rankOf } from "./ranks";
 import { Journal, withPostings } from "./ledger";
 import { DESK_DEFAULT_GAP, tradingDesk, type CouncilSoul, type Desk } from "./llm.server";
 import { defaultStrategy, deskStep, tradeStep, type Strategy, type TradeEvent, type Trader } from "./strategies";
 import { wanderPoint } from "./town";
 import { temperOf } from "./trading";
 import type { GameState, SpeechLine, Subject, Tape } from "./types";
-import { withTotals } from "./world";
+import { pushLog, withTotals } from "./world";
 import { formatGbp, mulberry32, satsToGbp, stakeSats, tapeGbp, uid } from "./wallets";
+
+/** A move this big in an hour (in %) goes in the Chronicle. */
+export const MARKET_MOVE_PCT = 5;
 
 /** How many fills the trading floor keeps. */
 export const TRADES_KEPT = 60;
@@ -89,6 +94,7 @@ export function tradeParish(
   events: TradeEvent[];
   speech: SpeechLine[];
   skipped: number;
+  notes: { kind: "subject" | "tape"; text: string }[];
   risk: NonNullable<GameState["risk"]>;
 } {
   const market = marketCoins(tape);
@@ -98,6 +104,7 @@ export function tradeParish(
   const universe = tradableCoins(tape);
   const hot = new Set(tape.trending ?? []);
   let skipped = 0;
+  const notes: { kind: "subject" | "tape"; text: string }[] = [];
   const stake = stakeSats(tape);
   const rng = mulberry32(state.seed + Math.floor(now / 60_000));
   const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(tape)));
@@ -120,6 +127,7 @@ export function tradeParish(
       record: s.record,
       trades: s.trades,
       knowledge: lesson ? addLesson(s.knowledge, lesson) : s.knowledge,
+      riskCap: RANK_INFO[rankOf(s.record)].riskCap,
     };
     const px = (coin: string) => priceOf(tape, coin);
     const gate = book.gateFor(s);
@@ -160,6 +168,26 @@ export function tradeParish(
       size: trader.position ? strategy.sizePct : s.size,
       entryUsd: trader.position?.entryUsd,
     };
+    // The Chronicle keeps what matters: a change of rank, and a trade that moved the purse a lot.
+    const was = rankOf(s.record);
+    const now_ = rankOf(trader.record);
+    const moved = rankChange(was, now_);
+    if (moved) {
+      notes.push({
+        kind: "subject",
+        text: moved > 0
+          ? `${s.firstName} rises to ${RANK_INFO[now_].label} (${RANK_INFO[now_].rule}) and may now risk up to ${Math.round(RANK_INFO[now_].riskCap * 100)}% a trade.`
+          : `${s.firstName} falls back to ${RANK_INFO[now_].label} — the record no longer holds up.`,
+      });
+    }
+    for (const f of step.fills) {
+      if (f.action === "close" && f.pnl !== undefined && s.balance > 0 && Math.abs(f.pnl) >= s.balance * 0.05) {
+        notes.push({
+          kind: "subject",
+          text: `${s.firstName} ${f.pnl > 0 ? "banks" : "loses"} ${gbp(Math.abs(f.pnl))} on ${f.coin} (${f.side}) — ${Math.round((Math.abs(f.pnl) / s.balance) * 100)}% of the purse; ${f.reason}.`,
+        });
+      }
+    }
     if (!event) return next;
     events.push(...step.fills);
     const verb = event.action === "open" ? (event.side === "long" ? "Buying" : "Shorting") : "Closing";
@@ -187,6 +215,7 @@ export function tradeParish(
     events,
     speech: speech.slice(0, 8),
     skipped,
+    notes,
     risk: { at: now, blocked: book.blocked, ...(book.pausedToday ? { pausedToday: book.pausedToday } : {}) },
   };
 }
@@ -236,9 +265,31 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
   }
   const answer = due ? memo.desk : undefined;
   const desk = answer && !("error" in answer) ? answer : null;
-  const { subjects, events, speech, skipped, risk } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
+  const { subjects, events, speech, skipped, risk, notes } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
   const journal = new Journal({ at: now, day: prev.day }, "trade");
   for (const e of events) journal.fill(e);
+
+  // The Chronicle: promotions and big trades, the market's big moves (once a coin a day), and a halt.
+  let log = prev.log;
+  for (const n of notes) log = pushLog({ day: prev.day, log }, n.kind, n.text);
+  const marketNotes = prev.marketNotes?.day === prev.day ? prev.marketNotes : { day: prev.day, coins: [] };
+  const noted = new Set(marketNotes.coins);
+  for (const coin of scanCoins(tape)) {
+    if (noted.has(coin)) continue;
+    const series = tradingSeries(ticks, coin, now);
+    if (series.length < 13) continue;
+    const move = (series[series.length - 1]! / series[series.length - 13]! - 1) * 100;
+    if (Math.abs(move) < MARKET_MOVE_PCT) continue;
+    noted.add(coin);
+    log = pushLog({ day: prev.day, log }, "tape", `${coin} ${move > 0 ? "surges" : "plunges"} ${move > 0 ? "+" : ""}${move.toFixed(1)}% in an hour.`);
+  }
+  if (prev.halt && prev.halt.at > (prev.lastTickAt ?? 0) && prev.halt.by === "ledger") {
+    log = pushLog({ day: prev.day, log }, "system", `Trading halted: ${prev.halt.reason}.`);
+  }
+  const traded: GameState = { ...prev, subjects, trades: [...events.slice().reverse(), ...(prev.trades ?? [])].slice(0, TRADES_KEPT) };
+  const reached = checkMilestones(traded, now);
+  for (const line of reached.notes) log = pushLog({ day: prev.day, log }, "crown", line);
+
   return withTotals({
     ...withPostings(prev, journal.postings),
     tape,
@@ -261,6 +312,9 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     lastTickAt: now,
     risk,
     feed,
+    log,
+    marketNotes: { day: prev.day, coins: [...noted] },
+    milestones: reached.milestones,
   });
 }
 

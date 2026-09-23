@@ -1132,3 +1132,141 @@
   line-height: 1.5;
   font-size: 0.88rem;
 }
+
+/* ── Objective, ranks, laws (src/game/Progress.tsx) ─────────────────────── */
+.objective {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--color-timber) 35%, var(--color-rule));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-parchment) 70%, white);
+}
+
+.objective .section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.objective-sub {
+  margin-top: 6px !important;
+}
+
+.objective-goal {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.objective-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-rule) 55%, transparent);
+  overflow: hidden;
+}
+
+.objective-meter span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-gain);
+}
+
+.objective .hint {
+  margin: 0;
+}
+
+.milestones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.74rem;
+}
+
+.milestones li {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-rule);
+}
+
+.milestone-done {
+  background: color-mix(in oklab, var(--color-gain) 14%, var(--color-parchment));
+  border-color: color-mix(in oklab, var(--color-gain) 40%, var(--color-rule)) !important;
+}
+
+.milestone-done::before {
+  content: "✓ ";
+}
+
+.milestone-next {
+  color: var(--color-ink-soft);
+  border-style: dashed !important;
+}
+
+.milestone-when {
+  color: var(--color-ink-soft);
+  font-size: 0.68rem;
+}
+
+.rank-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  border: 1px solid var(--color-rule);
+  color: var(--color-ink-soft);
+}
+
+.rank-journeyman {
+  border-color: color-mix(in oklab, var(--color-moss) 50%, var(--color-rule));
+  color: var(--color-moss-deep);
+}
+
+.rank-merchant {
+  border-color: color-mix(in oklab, var(--color-timber) 60%, var(--color-rule));
+  color: var(--color-timber);
+}
+
+.rank-master {
+  border-color: var(--color-crimson);
+  color: var(--color-crimson);
+  font-weight: 600;
+}
+
+.laws {
+  padding: 8px 12px;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+}
+
+.laws summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+.laws ul {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  line-height: 1.45;
+}
+
+.log-time {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--color-ink-soft);
+}

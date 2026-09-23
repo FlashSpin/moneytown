@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BAR_MS, defaultFor, holdBaseline, runBacktest, seriesAt, toGrid, type Grid } from "./backtest.ts";
+import { STRATEGY_KINDS } from "./strategies.ts";
 import { fullReport, tune } from "./validation.ts";
 
 /** A deterministic random-walk history: `coins` coins, `bars` 5-minute bars. */
@@ -90,7 +91,7 @@ describe("the full report", () => {
     const started = Date.now();
     const r = fullReport(g, OPTS);
     const took = Date.now() - started;
-    assert.equal(r.kinds.length, 5);
+    assert.equal(r.kinds.length, STRATEGY_KINDS.length);
     assert.ok(r.baselines.btc && r.baselines.btcValidation);
     for (const k of r.kinds) {
       assert.equal(k.walkForward.folds.length, 4);

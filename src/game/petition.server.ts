@@ -28,7 +28,7 @@ import {
 import { priceOf, scanCoins } from "./dawn";
 import { describeKnowledge } from "./knowledge";
 import { Journal, KING, villagerAccount, withPostings } from "./ledger";
-import { cleanStrategy, coinsLabel, defaultStrategy, unrealized } from "./strategies";
+import { cleanStrategy, coinsLabel, defaultStrategy, STRATEGY_KINDS, unrealized } from "./strategies";
 import { formatCoinPrice } from "@/lib/market";
 import { temperOf } from "./trading";
 import { needsSeal, parseCommand, parseFavor, parseTaxPercent, resolveBanish, type Command } from "./decree";
@@ -166,7 +166,7 @@ Reply with JSON only:
 - banish: first names to remove from the parish (seal-bearer only; "the poorest" etc. means pick from the roll).
 - taxRate: a whole percent to set the tax to, "auto" to let yourself choose it each dawn again, or null for no change (seal-bearer only).
 - favorAsset: a coin symbol from the markets list to fix the favoured market, "auto" to choose it yourself each dawn again, or null (seal-bearer only).
-- strategies: to set villagers' day-trading strategies (seal-bearer only), e.g. [{"name":"Agnes","kind":"scalp|momentum|breakout|reversion|trend","coins":["SOL","ETH"] or "all","size":20,"tp":1.5,"sl":1,"shorts":true}] — only the fields asked for; the rest stay as they are.
+- strategies: to set villagers' day-trading strategies (seal-bearer only), e.g. [{"name":"Agnes","kind":"${STRATEGY_KINDS.join("|")}","coins":["SOL","ETH"] or "all","size":20,"tp":1.5,"sl":1,"shorts":true}] — only the fields asked for; the rest stay as they are.
 - halt: "halt" to stop all new trading at once (an emergency stop — open trades are still managed and closed by their rules), "resume" to let trading start again, or null (seal-bearer only).`;
 }
 
@@ -229,9 +229,17 @@ function heuristicDecision(state: GameState, message: string, sovereign: boolean
     return { ...none, say: `So be it — the crown favours ${asset} in the markets.`, favorAsset: asset };
   }
 
-  const kindWord = lower.match(/\b(scalp|scalping|scalper|momentum|breakout|reversion|mean.reversion|trend)\b/)?.[1];
+  const kindWord = lower.match(/\b(scalp|scalping|scalper|momentum|breakout|reversion|mean.reversion|trend|conservative|cautious|volatility|volatile)\b/)?.[1];
   if (kindWord && /\bstrateg|\btrade\b|\bgive\b|\bset\b/.test(lower)) {
-    const kind = kindWord.startsWith("scalp") ? "scalp" : kindWord.includes("reversion") ? "reversion" : kindWord;
+    const kind = kindWord.startsWith("scalp")
+      ? "scalp"
+      : kindWord.includes("reversion")
+        ? "reversion"
+        : kindWord === "cautious"
+          ? "conservative"
+          : kindWord.startsWith("volatil")
+            ? "volatility"
+            : kindWord;
     const who = living(state).filter((x) => lower.includes(x.firstName.toLowerCase()));
     const market = scanCoins(state.tape);
     const all = /\b(all|every|any) coins?\b|\bwhole market\b|\bevery coin\b/.test(lower);

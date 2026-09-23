@@ -15,7 +15,7 @@
  */
 import { SIZE_DEFAULT, SIZE_MIN, SIZE_WEAK_MAX, WEAK_PURSE_SHARE } from "./constants.ts";
 import type { Asset } from "./dawn.ts";
-import { change, priorRange, rsi, sma } from "./indicators.ts";
+import { change, priorRange, rsi, sma, volatility } from "./indicators.ts";
 import { avoids, coinEdge, learnTrade, type Approach, type Knowledge } from "./knowledge.ts";
 import { idealExecutor, type Executor } from "./execution.ts";
 import type { Gate } from "./limits.ts";
@@ -27,8 +27,10 @@ export { FEE_RATE } from "./risk.ts";
 export const COOLDOWN_TICKS = 2;
 export const TICK_MS = 5 * 60_000;
 
-export type StrategyKind = "scalp" | "momentum" | "breakout" | "reversion" | "trend";
-export const STRATEGY_KINDS: StrategyKind[] = ["scalp", "momentum", "breakout", "reversion", "trend"];
+export type StrategyKind = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility";
+export const STRATEGY_KINDS: StrategyKind[] = ["scalp", "momentum", "breakout", "reversion", "trend", "conservative", "volatility"];
+/** Strategies that only ever buy, whatever their `shorts` setting. */
+export const LONG_ONLY: ReadonlySet<StrategyKind> = new Set(["conservative"]);
 
 export const STRATEGY_INFO: Record<
   StrategyKind,
@@ -73,6 +75,22 @@ export const STRATEGY_INFO: Record<
     sl: 2,
     maxHoldH: 24,
     warmup: 25,
+  },
+  conservative: {
+    label: "Conservative",
+    about: "buys only calm coins in a steady uptrend (above both averages, low volatility) and never shorts; small targets, quick to leave",
+    tp: 1.5,
+    sl: 0.8,
+    maxHoldH: 6,
+    warmup: 25,
+  },
+  volatility: {
+    label: "Volatility breakout",
+    about: "jumps on a coin whose swings suddenly double against the last two hours, in the direction it breaks; wide targets, short holds",
+    tp: 4,
+    sl: 2,
+    maxHoldH: 6,
+    warmup: 31,
   },
 };
 
@@ -138,7 +156,7 @@ export type TradeEvent = {
 const TEMPER_STRATEGY: Record<Temper, { kind: StrategyKind; size: number; shorts: boolean }> = {
   trend: { kind: "trend", size: 0.3, shorts: true },
   contrarian: { kind: "reversion", size: 0.25, shorts: true },
-  cautious: { kind: "reversion", size: 0.15, shorts: false },
+  cautious: { kind: "conservative", size: 0.15, shorts: false },
   bold: { kind: "breakout", size: 0.4, shorts: true },
   steady: { kind: "momentum", size: 0.25, shorts: false },
 };
@@ -228,6 +246,24 @@ export function entrySignal(kind: StrategyKind, s: number[]): Signal {
       if (v > 70) return { side: "short", reason: `overbought, RSI ${v.toFixed(0)}`, strength: 1 + (v - 70) / 10 };
       return null;
     }
+    case "conservative": {
+      const fast = sma(s, 6)!;
+      const slow = sma(s, 24)!;
+      const last = s[s.length - 1]!;
+      const c1h = change(s, 12)!;
+      const vol = volatility(s, 12)!;
+      if (last > fast && fast > slow && c1h > 0.2 && c1h < 2 && vol < 0.4)
+        return { side: "long", reason: `calm uptrend, +${c1h.toFixed(2)}% in the hour, volatility ${vol.toFixed(2)}%`, strength: 1 + c1h / 2 };
+      return null;
+    }
+    case "volatility": {
+      const recent = volatility(s, 6)!;
+      const before = volatility(s.slice(0, -6), 24);
+      const c = change(s, 3)!;
+      if (before === null || !(before > 0) || recent < before * 2 || Math.abs(c) < 0.5) return null;
+      const side = c > 0 ? "long" : "short";
+      return { side, reason: `swings ${(recent / before).toFixed(1)}× the last two hours, ${c >= 0 ? "+" : ""}${c.toFixed(2)}% in 15 min`, strength: Math.min(5, recent / before) };
+    }
     case "trend": {
       const fast = sma(s, 6)!;
       const slow = sma(s, 24)!;
@@ -246,6 +282,11 @@ function exitSignal(kind: StrategyKind, side: "long" | "short", s: number[]): st
   if (kind === "reversion") {
     const v = rsi(s, 14);
     if (v !== null && ((side === "long" && v >= 50) || (side === "short" && v <= 50))) return `RSI back to ${v.toFixed(0)}`;
+  }
+  if (kind === "conservative") {
+    const fast = sma(s, 6);
+    const slow = sma(s, 24);
+    if (fast !== null && slow !== null && fast < slow) return "uptrend broken";
   }
   if (kind === "trend") {
     const fast = sma(s, 6);
@@ -270,6 +311,8 @@ export type Trader = {
   record?: { wins: number; losses: number; pnl: number };
   trades?: number;
   knowledge?: Knowledge;
+  /** The most of its purse it may lose on one trade, by its rank (./ranks.ts); the global cap applies too. */
+  riskCap?: number;
 };
 
 type Step = { trader: Trader; event: TradeEvent | null };
@@ -420,14 +463,14 @@ export function tradeStep(
     const px = priceOf(coin);
     if (!(px > 0)) continue;
     const sig = entrySignal(st.kind, seriesOf(coin));
-    if (!sig || (sig.side === "short" && !st.shorts)) continue;
+    if (!sig || (sig.side === "short" && (!st.shorts || LONG_ONLY.has(st.kind)))) continue;
     if (gate(coin, 0)) continue;
     // Coins it has done well on count for more; focus coins win ties in their listed order.
     const score = Math.min(sig.strength, 5) * (1 + 0.5 * coinEdge(trader.knowledge, coin)) * (hot.has(coin) ? 1.15 : 1);
     if (!best || score > best.score) best = { coin, sig, px, score };
   }
   if (!best) return { trader, event: null };
-  const risk = strategyRisk(trader.knowledge, st.kind, best.coin, st.takeProfitPct, st.stopLossPct);
+  const risk = Math.min(strategyRisk(trader.knowledge, st.kind, best.coin, st.takeProfitPct, st.stopLossPct), trader.riskCap ?? 1);
   const stake = Math.min(stakeFor(trader.balance, st.sizePct, stakeSats), stakeForRisk(trader.balance, risk, st.stopLossPct));
   if (stake <= 0 || gate(best.coin, stake)) return { trader, event: null };
   return openAt(trader, { coin: best.coin, side: best.sig.side, stake, reason: best.sig.reason, by: st.kind, sl: st.stopLossPct }, now, exec);
@@ -504,7 +547,7 @@ export function deskStep(
     return { trader, events, skipped: "just left that coin" };
   }
   const size = clamp(order.sizePct ?? 1, 0.05, 1);
-  const stake = Math.min(stakeFor(t.balance, size, stakeSats), stakeForRisk(t.balance, riskShare(kelly(p, tp, sl)), sl));
+  const stake = Math.min(stakeFor(t.balance, size, stakeSats), stakeForRisk(t.balance, Math.min(riskShare(kelly(p, tp, sl)), t.riskCap ?? 1), sl));
   if (stake <= 0) return { trader: t, events };
   const capped = gate(coin, stake);
   if (capped) return { trader: t, events, skipped: capped };

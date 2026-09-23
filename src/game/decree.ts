@@ -17,7 +17,18 @@ export type Command = {
   favorAsset: DecreeChange<Asset>;
   /** New strategies for named villagers (raw; tidied against the market when applied). */
   strategies: { name: string; raw: Record<string, unknown> }[];
+  /** Stop all new trading (true), resume it (false), or no change (null). */
+  halt: boolean | null;
 };
+
+/** "halt" / "resume" (or true/false) → a halt command; anything else is no change. */
+export function parseHalt(v: unknown): boolean | null {
+  if (typeof v === "boolean") return v;
+  const s = String(v ?? "").trim().toLowerCase();
+  if (["halt", "stop", "pause", "freeze", "true"].includes(s)) return true;
+  if (["resume", "start", "unhalt", "restart", "false"].includes(s)) return false;
+  return null;
+}
 
 /** Standing royal orders the daily tick honours instead of the King's AI. */
 export type Decree = { taxRate?: number; favorAsset?: Asset };
@@ -42,7 +53,7 @@ export function parseFavor(v: unknown, coins: Asset[]): DecreeChange<Asset> {
 
 /** The AI's raw JSON → a command. Unknown or malformed fields mean "no change". */
 export function parseCommand(
-  obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown; strategies?: unknown },
+  obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown; strategies?: unknown; halt?: unknown; trading?: unknown },
   coins: Asset[],
 ): Command {
   const summon = Number(obj.summon);
@@ -63,6 +74,7 @@ export function parseCommand(
           .filter((x) => x.name)
           .slice(0, 24)
       : [],
+    halt: parseHalt(obj.halt ?? obj.trading),
   };
 }
 
@@ -79,5 +91,5 @@ export function resolveBanish<T extends { id: string; firstName: string }>(livin
 
 /** Whether a command asks for anything only the seal-bearer may order. */
 export function needsSeal(c: Command): boolean {
-  return c.banish.length > 0 || c.taxRate !== null || c.favorAsset !== null || c.strategies.length > 0;
+  return c.banish.length > 0 || c.taxRate !== null || c.favorAsset !== null || c.strategies.length > 0 || c.halt !== null;
 }

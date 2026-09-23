@@ -162,13 +162,31 @@ export function TradingFloor() {
   const trades = useGame((s) => s.trades);
   const lastTickAt = useGame((s) => s.lastTickAt);
   const desk = useGame((s) => s.desk);
+  const halt = useGame((s) => s.halt);
+  const risk = useGame((s) => s.risk);
+  const books = useGame((s) => s.ledger);
   const tape = useBestTape();
+  const blocked = Object.entries(risk?.blocked ?? {});
   return (
     <section className="trading-floor" aria-label="Trading floor">
       <p className="section-label">
         <CandlestickChart size={13} /> Trading floor
         {lastTickAt ? <span className="floor-tick"> · last check {ago(lastTickAt)}</span> : null}
       </p>
+      {halt ? (
+        <p className="halt-line" role="status">
+          <strong>Trading halted</strong> — {halt.reason}. Open trades are still watched and closed by their rules.
+        </p>
+      ) : risk?.pausedToday ? (
+        <p className="halt-line" role="status">
+          <strong>New trades paused until dawn</strong> — {risk.pausedToday.reason}.
+        </p>
+      ) : null}
+      {blocked.length ? (
+        <p className="desk-line">
+          <strong>Risk limits</strong> stopped at the last check: {blocked.map(([why, n]) => `${n} × ${why}`).join(", ")}.
+        </p>
+      ) : null}
       {desk ? (
         <p className="desk-line">
           <strong>Trading desk</strong>
@@ -186,8 +204,19 @@ export function TradingFloor() {
       ) : null}
       <p className="hint">
         Each trade is sized by the Kelly criterion from the villager&apos;s own record and never risks more than 6% of its purse; its own calls
-        need an 8-point edge over break-even.
+        need an 8-point edge over break-even. No new trade opens for a villager down 10% on the day, on a stale price, or past 25% of the
+        parish on one coin; a parish down 8% pauses until dawn.
       </p>
+      {books?.check ? (
+        <p className={books.check.ok ? "books-line" : "books-line books-bad"}>
+          {books.check.ok
+            ? `Books balanced — every purse matches the ledger (checked ${ago(books.check.checkedAt)}).`
+            : `Books out of balance on ${books.check.diffs.length} ${books.check.diffs.length === 1 ? "account" : "accounts"} — trading halted until checked.`}{" "}
+          <a href="/api/ledger" target="_blank" rel="noreferrer">
+            Audit the ledger
+          </a>
+        </p>
+      ) : null}
       {!trades?.length ? (
         <p className="hint">
           No trades yet. Every 5 minutes each villager&apos;s strategy scans every coin and trades the strongest signal; at the trading desk they

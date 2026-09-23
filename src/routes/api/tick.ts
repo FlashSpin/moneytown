@@ -16,10 +16,11 @@ async function tick(request: Request): Promise<Response> {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { loadWorldRow, saveWorld } = await import("@/lib/world.server");
+  const { loadWorldRow, saveNewDay } = await import("@/lib/world.server");
   const { runDailyTick } = await import("@/game/tick.server");
 
-  const row = await loadWorldRow();
+  let row = await loadWorldRow();
+  const fromDay = row.day;
   const hoursSinceUpdate = (Date.now() - new Date(row.updated_at).getTime()) / 3_600_000;
   const forced = new URL(request.url).searchParams.get("force") === "1";
   if (hoursSinceUpdate < 20 && !forced) {
@@ -29,9 +30,18 @@ async function tick(request: Request): Promise<Response> {
     return Response.json({ ok: true, skipped: true, day: row.day });
   }
 
-  const next = await runDailyTick(row.state);
-  await saveWorld(next);
-  return Response.json({ ok: true, day: next.day });
+  // The new day saves only if the row is unchanged and still on `fromDay`, so
+  // two overlapping calls can't both advance it. A trade tick or petition
+  // landing meanwhile just means dawn is re-run on the fresh row.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      row = await loadWorldRow();
+      if (row.day !== fromDay) return Response.json({ ok: true, skipped: true, day: row.day });
+    }
+    const next = await runDailyTick(row.state);
+    if (await saveNewDay(next, row.rev)) return Response.json({ ok: true, day: next.day });
+  }
+  return Response.json({ ok: false, error: "world kept changing; try again" }, { status: 409 });
 }
 
 export const Route = createFileRoute("/api/tick")({

@@ -814,6 +814,31 @@
   padding-top: 1px;
 }
 
+.halt-line {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in oklab, var(--color-crimson) 55%, var(--color-rule));
+  background: color-mix(in oklab, var(--color-crimson) 10%, var(--color-parchment));
+}
+
+.books-line {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--color-ink-soft);
+}
+
+.books-line a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.books-bad {
+  color: var(--color-crimson);
+  font-weight: 600;
+}
+
 .desk-line {
   margin: 0;
   font-size: 0.78rem;

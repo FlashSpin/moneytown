@@ -16,6 +16,7 @@ import { defaultKingPolicy, kingSpawnCount } from "./economy";
 import { kingFlavor } from "./brains";
 import { priceOf } from "./dawn";
 import { councilStrategies, isLiving, wealthLine } from "./review.server";
+import { Journal, KING, MARKET, villagerAccount, withPostings } from "./ledger";
 import { unrealized } from "./strategies";
 import { coinsNeeded } from "./trade.server";
 import { settleDay } from "./trading";
@@ -54,6 +55,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   const rent = rentSats(tape);
   const floor = gbpToSats(HANG_BELOW_GBP, tapeGbp(tape));
   let kingBalance = prev.king.balance;
+  const journal = new Journal({ at: now, day }, "dawn");
   const settled: Subject[] = [];
   for (const sub of marked) {
     const dues = settleDay({
@@ -64,6 +66,8 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
       floor,
     });
     kingBalance += dues.tithe + dues.rentPaid;
+    journal.transfer(villagerAccount(sub.id), KING, dues.tithe, "tax", { memo: `${Math.round(prev.taxRate * 100)}% of the day's profit` });
+    journal.transfer(villagerAccount(sub.id), KING, dues.rentPaid, "upkeep");
     // The gallows judge the whole purse, open trade included at today's price.
     const open = sub.position ? unrealized(sub.position, priceOf(tape, sub.position.coin)) : 0;
     const hanged = dues.balance + open < floor;
@@ -74,6 +78,12 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     );
     if (hanged) {
       kingBalance += Math.max(0, dues.balance + open);
+      // The purse goes to the crown, and its open trade is settled at today's price against the market.
+      journal.transfer(villagerAccount(sub.id), KING, dues.balance, "gallows", { memo: `${sub.firstName} hanged` });
+      journal.transfer(MARKET, KING, Math.max(0, dues.balance + open) - dues.balance, "gallows", {
+        coin: sub.position?.coin,
+        memo: `${sub.firstName}'s open trade settled at the mark`,
+      });
       push("death", `${sub.firstName}'s purse has fallen below £${HANG_BELOW_GBP}. They are walked to the gallows.`);
       settled.push({
         ...sub,
@@ -104,6 +114,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     const child = makeSubject(rng, taken, stake, day);
     child.dayStart = stake;
     kingBalance -= stake;
+    journal.transfer(KING, villagerAccount(child.id), stake, "stake", { memo: `${child.firstName} opened from the treasury` });
     settled.push(child);
     push("crown", `The King opens ${child.firstName} from the treasury, staked for trade.`);
   }
@@ -132,7 +143,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   };
 
   return withTotals({
-    ...prev,
+    ...withPostings(prev, journal.postings),
     day,
     tape,
     taxRate,

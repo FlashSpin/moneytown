@@ -14,8 +14,12 @@ import { MIN_SAMPLE, type Approach, type Knowledge, type Tally } from "./knowled
 
 /** Fee per fill (open and close), as a fraction — about what a small account pays an exchange. */
 export const FEE_RATE = 0.004;
-/** Both fills, in percent of the stake. */
+/** Both fills' fees, in percent of the stake. */
 export const ROUND_TRIP_PCT = FEE_RATE * 2 * 100;
+/** Spread and slippage on both fills for a typical liquid coin, in percent (see ./execution.ts). */
+export const SPREAD_ALLOWANCE_PCT = 0.15;
+/** Everything a round trip costs, in percent of the stake. */
+export const TRADING_COST_PCT = ROUND_TRIP_PCT + SPREAD_ALLOWANCE_PCT;
 /** The most of its purse a villager may lose on one trade, at the stop (6%). */
 export const MAX_RISK = 0.06;
 /** The least it risks — a losing approach keeps trading small, so it can still learn. */
@@ -29,9 +33,9 @@ export const SIZING_SAMPLE = 5;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** The chance of winning at which a trade to `tp`% / `sl`% breaks even after fees. */
+/** The chance of winning at which a trade to `tp`% / `sl`% breaks even after fees, spread and slippage. */
 export function breakEven(tp: number, sl: number): number {
-  return (sl + ROUND_TRIP_PCT) / (tp + sl);
+  return (sl + TRADING_COST_PCT) / (tp + sl);
 }
 
 /**
@@ -40,8 +44,8 @@ export function breakEven(tp: number, sl: number): number {
  * when the trade has no edge.
  */
 export function kelly(p: number, tp: number, sl: number): number {
-  const win = tp - ROUND_TRIP_PCT;
-  const loss = sl + ROUND_TRIP_PCT;
+  const win = tp - TRADING_COST_PCT;
+  const loss = sl + TRADING_COST_PCT;
   if (!(win > 0) || !(loss > 0)) return -1;
   return p - (1 - p) / (win / loss);
 }
@@ -51,9 +55,9 @@ export function riskShare(kellyFraction: number): number {
   return kellyFraction > 0 ? clamp(kellyFraction / 2, MIN_RISK, MAX_RISK) : MIN_RISK;
 }
 
-/** The stake that loses `risk` of the purse if the stop is hit (fees included). */
+/** The stake that loses `risk` of the purse if the stop is hit (all costs included). */
 export function stakeForRisk(balance: number, risk: number, sl: number): number {
-  return Math.floor((balance * risk) / ((sl + ROUND_TRIP_PCT) / 100));
+  return Math.floor((balance * risk) / ((sl + TRADING_COST_PCT) / 100));
 }
 
 const laplace = (t: Tally) => (t.w + 1) / (t.w + t.l + 2);

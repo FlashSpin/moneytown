@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendTick, change, priceFresh, priorRange, rsi, seriesOf, sma, tradingSeries, volatility } from "./indicators.ts";
+import { appendTick, change, priceFresh, validatePrices, priorRange, rsi, seriesOf, sma, tradingSeries, volatility } from "./indicators.ts";
 
 describe("indicators", () => {
   const up = [100, 101, 102, 103, 104, 105];
@@ -70,5 +70,19 @@ describe("trading on clean data", () => {
     assert.equal(priceFresh(t, "ETH", 16 * M), false);
     assert.equal(priceFresh(t, "SOL", 16 * M), true);
     assert.deepEqual(tradingSeries(t, "SOL", 40 * M), [], "no tick for 25 minutes");
+  });
+});
+
+describe("checking prices before they are recorded", () => {
+  it("holds back a jump over 25% until the next tick confirms it", () => {
+    const t = appendTick(undefined, 0, { SOL: 100, ETH: 10 });
+    const first = validatePrices(t, { SOL: 140, ETH: 10.5, BAD: -1 });
+    assert.deepEqual(first.accepted, { ETH: 10.5 });
+    assert.deepEqual(first.held, ["SOL"]);
+    const t2 = { ...appendTick(t, 1, first.accepted), suspect: first.suspect };
+    const second = validatePrices(t2, { SOL: 141 });
+    assert.deepEqual(second.accepted, { SOL: 141 }, "two ticks agree: a real move");
+    const third = validatePrices(t2, { SOL: 60 });
+    assert.deepEqual(third.held, ["SOL"], "a different wild price is held again");
   });
 });

@@ -20,7 +20,7 @@ import { marketCoins, priceOf, scanCoins, type Asset } from "./dawn";
 import { trimSpeech } from "./brains";
 import { coinStats, seriesOf, type Ticks } from "./indicators";
 import { describeKnowledge, type Knowledge } from "./knowledge";
-import { MAX_RISK, MIN_EDGE, ROUND_TRIP_PCT } from "./risk";
+import { MAX_RISK, MIN_EDGE, TRADING_COST_PCT } from "./risk";
 import {
   cleanStrategy,
   coinsLabel,
@@ -184,7 +184,7 @@ function councilPrompt(input: {
   return `Day ${input.day}${input.dawn ? ", dawn" : ", a review during the day"}. You are the KING of Ledgerford and master of its trading house. Every villager is an independent DAY-TRADING bot staked from your treasury. Each runs a strategy that trades automatically every 5 minutes across EVERY coin in the market (or the coins it focuses on); between councils each may also place its own trades at the trading desk whenever it chooses. Each villager remembers how every trade went — by coin, by approach, long vs short — and keeps written lessons: build on them. You ADVISE each villager on its strategy; they then hold a council and each decides.
 
 How the money works:
-- Each trade: LONG (gains as the coin rises) or SHORT (gains as it falls), size = % of the purse, closed at the take-profit (TP) or stop-loss (SL) %, by the strategy's own exit, or a time limit. Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee, so tiny targets lose money: keep TP well above ${(FEE_RATE * 200).toFixed(1)}%.
+- Each trade: LONG (gains as the coin rises) or SHORT (gains as it falls), size = % of the purse, closed at the take-profit (TP) or stop-loss (SL) %, by the strategy's own exit, or a time limit. Orders fill like a real exchange's: buys at the ask, sells at the bid, plus slippage, and every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee — a round trip costs about ${TRADING_COST_PCT.toFixed(2)}%, so tiny targets lose money: keep TP well above ${(TRADING_COST_PCT * 2).toFixed(1)}%. Orders below the exchange's minimum size are rejected, so tiny purses can't trade every coin.
 - Each dawn: your tax takes ${tax}% of the day's PROFIT only, then £${RENT_GBP} upkeep. A purse below £${HANG_BELOW_GBP} hangs.
 
 The strategies:
@@ -308,7 +308,7 @@ function parishPrompt(input: {
 
 The strategies:
 ${MENU}
-Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee.
+Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee plus the spread and slippage (about ${TRADING_COST_PCT.toFixed(2)}% a round trip).
 
 Markets (5-minute data):
 ${marketsBlock(input.tape, input.ticks)}
@@ -375,9 +375,9 @@ function deskPrompt(input: { day: number; tape: Tape; ticks?: Ticks; kingPlan?: 
       return `${s.id}: ${p.side} ${p.coin} ${move}% after ${mins} min${p.own ? ` (its own trade: TP ${p.own.tp}% SL ${p.own.sl}%)` : ` (from its ${p.by ?? s.strategy.kind} strategy)`}`;
     })
     .join("\n");
-  return `Day ${input.day}. The TRADING DESK of Ledgerford. Each villager below is an independent day-trading bot with its own temperament. Its strategy already trades automatically every 5 minutes across every coin; here each villager may ALSO act on its own judgement right now: buy (long), short, close its trade, or hold (let its strategy carry on). Each villager holds at most one trade; buying or shorting while holding another trade switches (two fills). Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee, so only act on a real edge — holding is usually right, and churning loses money.
+  return `Day ${input.day}. The TRADING DESK of Ledgerford. Each villager below is an independent day-trading bot with its own temperament. Its strategy already trades automatically every 5 minutes across every coin; here each villager may ALSO act on its own judgement right now: buy (long), short, close its trade, or hold (let its strategy carry on). Each villager holds at most one trade; buying or shorting while holding another trade switches (two fills). Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee and crosses the spread (about ${TRADING_COST_PCT.toFixed(2)}% a round trip), so only act on a real edge — holding is usually right, and churning loses money.
 
-How a call is judged: give your honest "chance" (%) that the trade reaches its take-profit before its stop-loss. Break-even chance = (sl + ${ROUND_TRIP_PCT.toFixed(1)}) / (tp + sl). A call only goes ahead when its chance beats break-even by at least ${Math.round(
+How a call is judged: give your honest "chance" (%) that the trade reaches its take-profit before its stop-loss. Break-even chance = (sl + ${TRADING_COST_PCT.toFixed(2)}) / (tp + sl). A call only goes ahead when its chance beats break-even by at least ${Math.round(
     MIN_EDGE * 100,
   )} points — the trade must look clearly mispriced — and each villager's chances are checked against how its past calls actually went (over-confident villagers get marked down). The stake is then sized by the Kelly criterion, never risking more than ${Math.round(
     MAX_RISK * 100,

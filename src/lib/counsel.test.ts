@@ -49,8 +49,8 @@ describe("the King's AI cascade", () => {
     mockFetch((url) => (url.includes("googleapis") ? json({ error: "quota" }, 429) : groqReply('{"say":"Aye"}')));
     const res = await askCounsel("prompt");
     assert.deepEqual(res, { ok: true, text: '{"say":"Aye"}', source: "groq" });
-    assert.equal(calls.filter((c) => c.url.includes("googleapis")).length, 3, "each Gemini model has its own quota");
-    const groq = calls[3]!;
+    assert.equal(calls.filter((c) => c.url.includes("googleapis")).length, 4, "each Gemini model has its own quota");
+    const groq = calls[4]!;
     assert.equal(groq.url, "https://api.groq.com/openai/v1/chat/completions");
     assert.equal((groq.init.headers as Record<string, string>).Authorization, "Bearer q-key");
     assert.equal(JSON.parse(String(groq.init.body)).model, "openai/gpt-oss-120b");
@@ -59,14 +59,14 @@ describe("the King's AI cascade", () => {
   it("tries older Gemini models when a model name is unknown (404)", async () => {
     process.env.GEMINI_API_KEY = "g-key";
     mockFetch((url) =>
-      url.includes("gemini-3.1-flash-lite") ? json({ error: { message: "models/x is not found" } }, 404) : geminiReply('{"say":"Hark"}'),
+      url.includes("gemini-3") ? json({ error: { message: "models/x is not found" } }, 404) : geminiReply('{"say":"Hark"}'),
     );
     const res = await askCounsel("prompt");
     assert.equal(res.ok && res.source, "gemini");
-    assert.match(calls[1]!.url, /models\/gemini-2\.5-flash-lite:generateContent$/);
+    assert.match(calls[3]!.url, /models\/gemini-2\.5-flash-lite:generateContent$/);
     // Gemini 2.5 takes no thinkingLevel; Gemini 3 does.
     assert.equal(JSON.parse(String(calls[0]!.init.body)).generationConfig.thinkingConfig.thinkingLevel, "low");
-    assert.equal(JSON.parse(String(calls[1]!.init.body)).generationConfig.thinkingConfig, undefined);
+    assert.equal(JSON.parse(String(calls[3]!.init.body)).generationConfig.thinkingConfig, undefined);
   });
 
   it("tries the next Gemini model when one is overloaded (503) or out of quota (429)", async () => {
@@ -74,14 +74,14 @@ describe("the King's AI cascade", () => {
     mockFetch((url) =>
       url.includes("gemini-3.1-flash-lite")
         ? json({ error: { message: "high demand" } }, 503)
-        : url.includes("gemini-2.5-flash-lite")
+        : url.includes("gemini-3.6-flash-lite")
           ? json({ error: { message: "quota" } }, 429)
           : geminiReply('{"say":"Hark"}'),
     );
     const res = await askCounsel("prompt");
     assert.equal(res.ok && res.source, "gemini");
     assert.equal(calls.length, 3);
-    assert.match(calls[2]!.url, /models\/gemini-2\.5-flash:generateContent$/);
+    assert.match(calls[2]!.url, /models\/gemini-3\.6-flash:generateContent$/);
   });
 
   it("stops at a bad key rather than trying every model", async () => {

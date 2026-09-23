@@ -109,3 +109,15 @@ describe("trending coins", () => {
     assert.deepEqual(parseGeckoTrending(null), []);
   });
 });
+
+describe("Kraken quotes and order rules", () => {
+  it("reads the best bid and ask, 24h volume and lot size", async () => {
+    const { parseKrakenTicker, parseKrakenPairs } = await import("./market.ts");
+    const t = parseKrakenTicker({ result: { SOLUSD: { c: ["100", "1"], o: "95", b: ["99.9", "1", "1"], a: ["100.1", "1", "1"], v: ["1000", "20000"] } } });
+    assert.deepEqual(t.get("SOLUSD"), { usd: 100, change24h: (5 / 95) * 100, bid: 99.9, ask: 100.1, vol24hUsd: 2_000_000 });
+    const crossed = parseKrakenTicker({ result: { X: { c: ["10"], o: "10", b: ["10.2"], a: ["10.1"] } } });
+    assert.equal(crossed.get("X")?.bid, undefined, "a crossed book is dropped");
+    const p = parseKrakenPairs({ result: { SOLUSD: { wsname: "SOL/USD", ordermin: "0.02", costmin: "0.5", lot_decimals: 8 } } });
+    assert.deepEqual(p.get("SOL"), { key: "SOLUSD", ordermin: 0.02, costmin: 0.5, lotDecimals: 8 });
+  });
+});

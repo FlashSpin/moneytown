@@ -11,9 +11,10 @@
 import { loadTape } from "@/lib/tape.server";
 import { SHOUT_LIFE } from "./constants";
 import { marketCoins, priceOf, scanCoins } from "./dawn";
-import { appendTick, tradingSeries, type Ticks } from "./indicators";
+import { appendTick, priceFresh, tradingSeries, validatePrices, type Ticks } from "./indicators";
 import { haltReason, riskBook, type Gate } from "./limits";
 import { standAt } from "./shops";
+import { marketExecutor } from "./execution";
 import { addLesson } from "./knowledge";
 import { Journal, withPostings } from "./ledger";
 import { DESK_DEFAULT_GAP, tradingDesk, type CouncilSoul, type Desk } from "./llm.server";
@@ -92,6 +93,8 @@ export function tradeParish(
 } {
   const market = marketCoins(tape);
   const book = riskBook({ state, ticks, now, priceOf: (coin) => priceOf(tape, coin), env });
+  // Orders fill like an exchange's: at the bid or ask, with slippage, lot sizes and minimums.
+  const exec = marketExecutor(tape);
   const universe = tradableCoins(tape);
   const hot = new Set(tape.trending ?? []);
   let skipped = 0;
@@ -128,12 +131,14 @@ export function tradeParish(
     };
     const order = desk?.orders.get(s.id);
     // Its own call at the desk, if it made one that could be carried out; otherwise its strategy trades.
-    const own = order ? deskStep(me, order, px, now, stake, counted) : null;
+    const own = order ? deskStep(me, order, px, now, stake, counted, exec) : null;
     if (own?.skipped) skipped++;
+    if (own?.skipped?.startsWith("rejected")) book.block(own.skipped);
     const step = own?.events.length
       ? { trader: own.trader, fills: own.events }
       : (() => {
-          const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, counted);
+          const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, counted, exec);
+          if (r.rejected) book.block(r.rejected);
           return { trader: r.trader, fills: r.event ? [r.event] : [] };
         })();
     const trader = step.trader;
@@ -208,7 +213,16 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
   if (tape.dark) return { ...prev, lastTickAt: now };
   memo.tape = tape;
 
-  const ticks = appendTick(prev.ticks, now, pricesOf(tape));
+  // Prices are checked before they are recorded: an implausible jump waits for the next tick to confirm it.
+  const checked = validatePrices(prev.ticks, pricesOf(tape));
+  const ticks = { ...appendTick(prev.ticks, now, checked.accepted), suspect: checked.suspect };
+  // A held-back coin trades (and marks) at its last good price this tick, with no book to fill against.
+  for (const coin of checked.held) {
+    const good = ticks.px[coin]?.[ticks.px[coin]!.length - 1];
+    const q = tape.assets[coin];
+    if (good && q) tape = { ...tape, assets: { ...tape.assets, [coin]: { usd: good, change24h: q.change24h, name: q.name, src: q.src } } };
+  }
+  const feed = feedHealth(tape, ticks, now, checked.held);
   const due = deskDue(prev, now, memo.force);
   if (due && memo.desk === undefined) {
     memo.desk = await tradingDesk({
@@ -246,5 +260,22 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     speechAt: speech.length ? now : prev.speechAt,
     lastTickAt: now,
     risk,
+    feed,
   });
+}
+
+/** How healthy the market data is this tick: where prices came from, which have a book, and which are stale or held back. */
+export function feedHealth(tape: Tape, ticks: Ticks, now: number, held: string[]): NonNullable<GameState["feed"]> {
+  const coins = scanCoins(tape);
+  const quotes = coins.map((c) => tape.assets[c]).filter((q) => q && q.usd > 0);
+  return {
+    at: now,
+    source: tape.source,
+    listed: coins.length,
+    priced: quotes.length,
+    kraken: quotes.filter((q) => q!.src === "kraken").length,
+    withBook: quotes.filter((q) => q!.bid && q!.ask).length,
+    stale: coins.filter((c) => !priceFresh(ticks, c, now)),
+    held,
+  };
 }

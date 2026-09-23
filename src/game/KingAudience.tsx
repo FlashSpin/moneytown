@@ -83,6 +83,31 @@ function SealControl() {
   );
 }
 
+const PROVIDER_NAMES: Record<string, string> = {
+  gemini: "Gemini",
+  groq: "Groq",
+  claude: "Claude",
+  grok: "Grok",
+  pollinations: "Free online wits",
+};
+
+/** Seal-bearer only: why the King answered with the mind he did. */
+function AiReport({ rows }: { rows: { provider: string; configured: boolean; last: string | null }[] }) {
+  return (
+    <details className="ai-report">
+      <summary>AI status (only thou seest this)</summary>
+      <ul>
+        {rows.map((r) => (
+          <li key={r.provider}>
+            <strong>{PROVIDER_NAMES[r.provider] ?? r.provider}:</strong>{" "}
+            {!r.configured ? "no key set" : (r.last ?? "not tried (an earlier one answered)")}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 /** An audience with the King's AI: counsel, news of the villagers, summons — and decrees for the seal-bearer. */
 export function KingAudience() {
   const audience = useGame((s) => s.audience);
@@ -91,6 +116,7 @@ export function KingAudience() {
   const day = useGame((s) => s.day);
   const kingBrain = useGame((s) => s.kingBrain);
   const sovereign = useGame((s) => s.sovereign);
+  const diagnostics = useGame((s) => s.diagnostics);
   const summonedToday = useGame((s) => (s.petitions?.day === s.day ? s.petitions.summoned : 0));
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLOListElement>(null);
@@ -154,6 +180,8 @@ export function KingAudience() {
           {kingBrain ? `The King's mind: ${kingBrain}` : "No AI reachable — the King is using stock replies."}
         </p>
       ) : null}
+
+      {sovereign && diagnostics ? <AiReport rows={diagnostics} /> : null}
 
       <form
         className="audience-form"

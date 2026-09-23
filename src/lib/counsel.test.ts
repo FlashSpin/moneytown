@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { askCounsel } from "./counsel.server.ts";
+import { askCounsel, counselDiagnostics } from "./counsel.server.ts";
 
 type Call = { url: string; init: RequestInit };
 const realFetch = globalThis.fetch;
@@ -52,6 +52,39 @@ describe("the King's AI cascade", () => {
     assert.equal(calls[1]!.url, "https://api.groq.com/openai/v1/chat/completions");
     assert.equal((calls[1]!.init.headers as Record<string, string>).Authorization, "Bearer q-key");
     assert.equal(JSON.parse(String(calls[1]!.init.body)).model, "openai/gpt-oss-120b");
+  });
+
+  it("tries older Gemini models when a model name is unknown (404)", async () => {
+    process.env.GEMINI_API_KEY = "g-key";
+    mockFetch((url) =>
+      url.includes("gemini-3.1-flash-lite") ? json({ error: { message: "models/x is not found" } }, 404) : geminiReply('{"say":"Hark"}'),
+    );
+    const res = await askCounsel("prompt");
+    assert.equal(res.ok && res.source, "gemini");
+    assert.match(calls[1]!.url, /models\/gemini-2\.5-flash-lite:generateContent$/);
+    // Gemini 2.5 takes no thinkingLevel; Gemini 3 does.
+    assert.equal(JSON.parse(String(calls[0]!.init.body)).generationConfig.thinkingConfig.thinkingLevel, "low");
+    assert.equal(JSON.parse(String(calls[1]!.init.body)).generationConfig.thinkingConfig, undefined);
+  });
+
+  it("reports why each provider failed, without leaking keys", async () => {
+    process.env.GEMINI_API_KEY = "g-secret-key";
+    process.env.GROQ_API_KEY = "q-secret-key";
+    mockFetch((url) =>
+      url.includes("googleapis")
+        ? json({ error: { message: "API key not valid. Please pass a valid API key." } }, 400)
+        : url.includes("groq")
+          ? json({ choices: [{ finish_reason: "length", message: { content: "" } }] })
+          : json({}, 503),
+    );
+    const res = await askCounsel("prompt");
+    assert.equal(res.ok, false);
+    const report = Object.fromEntries(counselDiagnostics().map((r) => [r.provider, r]));
+    assert.equal(report.gemini!.last, "gemini-3.1-flash-lite: HTTP 400: API key not valid. Please pass a valid API key.");
+    assert.equal(report.groq!.last, "openai/gpt-oss-120b: empty reply (length)");
+    assert.equal(report.pollinations!.last, "failed");
+    assert.equal(report.claude!.configured, false);
+    assert.doesNotMatch(JSON.stringify(report), /secret/);
   });
 
   it("honours model overrides", async () => {

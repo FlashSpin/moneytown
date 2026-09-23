@@ -77,8 +77,16 @@ export type Subject = PurseFields & {
   plan?: string;
   /** Whether its current trade follows the King's advice. */
   followsKing?: boolean;
-  /** Track record across every marked trade. */
+  /** Track record across every closed trade (net of fees). */
   record?: { wins: number; losses: number; pnl: number };
+  /** The day-trading strategy it runs every tick (chosen at the council; see ./strategies.ts). */
+  strategy?: import("./strategies.ts").Strategy;
+  /** Its open trade, if any. */
+  position?: import("./strategies.ts").Position;
+  /** Fills today (opens and closes). */
+  trades?: number;
+  cooldownUntil?: number;
+  cooldownCoin?: Asset;
 };
 
 export type King = PurseFields & {
@@ -119,10 +127,16 @@ export type GameState = {
   petitions?: { day: number; count: number; summoned: number };
   /** The latest parish council: the King's plan and the villagers' strategy debate. */
   council?: { at: number; day: number; kingPlan: string; lines: { fromId: string; toId: string | null; text: string }[] };
+  /** Rolling prices for every coin, one sample per trading tick (server-side; stripped before reaching the browser). */
+  ticks?: import("./indicators.ts").Ticks;
+  /** The trading floor: recent fills, newest first. */
+  trades?: import("./strategies.ts").TradeEvent[];
+  /** When `speech` was last written by the server — the browser replays it only when this changes. */
+  speechAt?: number;
+  /** When the villagers last traded (the 5-minute tick). */
+  lastTickAt?: number;
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
-  /** Recent prices, one sample per review, oldest first — the King reads trends from it. */
-  priceHistory?: import("./trading.ts").PriceSample[];
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset };
 };

@@ -1,0 +1,31 @@
+# Every 5 minutes, the villagers trade: /api/trade runs each villager's own
+# strategy against live prices (no AI — the strategies are chosen at the
+# council, every 4 hours). Free on GitHub Actions for public repositories.
+# Uses the same CRON_SECRET repository secret as the King's review.
+# GitHub may delay or skip scheduled runs when it is busy; the game copes.
+name: Villagers trade
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Let the villagers trade
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://moneytown.vercel.app' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Add the CRON_SECRET repository secret (same value as in Vercel)."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/trade"

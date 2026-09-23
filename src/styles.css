@@ -733,3 +733,87 @@
   color: var(--color-ink-soft);
   font-size: 0.74rem;
 }
+
+.trade-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--color-parchment) 55%, white);
+}
+
+.trade-card .hint {
+  margin: 0;
+}
+
+.trade-card-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+}
+
+.trade-open {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.trading-floor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--color-moss) 35%, var(--color-rule));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-parchment) 60%, white);
+}
+
+.trading-floor .section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-moss-deep);
+}
+
+.floor-tick {
+  font-family: var(--font-body);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-ink-soft);
+}
+
+.floor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.floor-list li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  padding-bottom: 4px;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-rule) 60%, transparent);
+}
+
+.floor-time {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--color-ink-soft);
+  padding-top: 1px;
+}
+
+.floor-why {
+  color: var(--color-ink-soft);
+}

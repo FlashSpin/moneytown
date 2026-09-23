@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiReviewRouteImport } from './routes/api/review'
 import { Route as ApiTickRouteImport } from './routes/api/tick'
+import { Route as ApiTradeRouteImport } from './routes/api/trade'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const ApiTickRoute = ApiTickRouteImport.update({
   path: '/api/tick',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTradeRoute = ApiTradeRouteImport.update({
+  id: '/api/trade',
+  path: '/api/trade',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
+  '/api/trade': typeof ApiTradeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
+  '/api/trade': typeof ApiTradeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
+  '/api/trade': typeof ApiTradeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/review' | '/api/tick'
+  fullPaths: '/' | '/api/review' | '/api/tick' | '/api/trade'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/review' | '/api/tick'
-  id: '__root__' | '/' | '/api/review' | '/api/tick'
+  to: '/' | '/api/review' | '/api/tick' | '/api/trade'
+  id: '__root__' | '/' | '/api/review' | '/api/tick' | '/api/trade'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiReviewRoute: typeof ApiReviewRoute
   ApiTickRoute: typeof ApiTickRoute
+  ApiTradeRoute: typeof ApiTradeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTickRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/trade': {
+      id: '/api/trade'
+      path: '/api/trade'
+      fullPath: '/api/trade'
+      preLoaderRoute: typeof ApiTradeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiReviewRoute: ApiReviewRoute,
   ApiTickRoute: ApiTickRoute,
+  ApiTradeRoute: ApiTradeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

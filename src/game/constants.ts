@@ -34,8 +34,6 @@ export const SIZE_DEFAULT = 0.4;
 /** A villager whose purse is below this share of the stake may risk no more than SIZE_WEAK_MAX. */
 export const WEAK_PURSE_SHARE = 0.5;
 export const SIZE_WEAK_MAX = 0.25;
-/** Price samples kept for the King to read trends (one per review: ~2 days at 4h). */
-export const PRICE_HISTORY = 12;
 
 /** How often the client re-fetches the shared world. The world itself only changes once a day. */
 export const WORLD_POLL_MS = 60_000;

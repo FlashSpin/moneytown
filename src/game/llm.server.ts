@@ -14,7 +14,7 @@
  * what it has learned (src/game/knowledge.ts) and asks it for a lesson, so
  * it builds on its experience. Each call returns null when no AI answers.
  */
-import { askCounsel, type CounselSource } from "@/lib/counsel.server";
+import { askCounsel, counselDiagnostics, type CounselSource } from "@/lib/counsel.server";
 import { HANG_BELOW_GBP, RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
 import { marketCoins, priceOf, scanCoins, type Asset } from "./dawn";
 import { trimSpeech } from "./brains";
@@ -453,11 +453,24 @@ function parseLessons(raw: unknown, souls: CouncilSoul[]): Map<string, string> {
   return out;
 }
 
-/** The villagers look at the market with the (free) AI and place their own trades. Null when no AI answers. */
-export async function tradingDesk(input: Parameters<typeof deskPrompt>[0]): Promise<Desk | null> {
+/** Why the free AI didn't answer, from each free provider's latest attempt (no keys in it). */
+function freeAiReport(): string {
+  return counselDiagnostics()
+    .filter((r) => r.provider === "gemini" || r.provider === "groq")
+    .map((r) => `${r.provider}: ${r.configured ? (r.last ?? "not tried") : "no key"}`)
+    .join("; ");
+}
+
+/**
+ * The villagers look at the market with the (free) AI and place their own
+ * trades. When no AI answers usefully, says why (`error`).
+ */
+export async function tradingDesk(input: Parameters<typeof deskPrompt>[0]): Promise<Desk | { error: string }> {
+  let text = "";
   try {
     const res = await askCounsel(deskPrompt(input), { freeOnly: true });
-    if (!res.ok || !res.text.trim()) return null;
+    if (!res.ok || !res.text.trim()) return { error: `no free AI answered — ${freeAiReport()}` };
+    text = res.text;
     const obj = extractJson(res.text) as { say?: unknown; orders?: unknown; lessons?: unknown; nextMinutes?: unknown };
     const next = Number(obj.nextMinutes);
     return {
@@ -467,7 +480,8 @@ export async function tradingDesk(input: Parameters<typeof deskPrompt>[0]): Prom
       nextMin: Number.isFinite(next) ? clamp(Math.round(next), DESK_MIN_GAP, DESK_MAX_GAP) : DESK_DEFAULT_GAP,
       brain: { kind: res.source, label: BRAIN_LABELS[res.source] },
     };
-  } catch {
-    return null;
+  } catch (error) {
+    const reply = text.replace(/\s+/g, " ").trim().slice(0, 80);
+    return { error: `unreadable reply (${error instanceof Error ? error.message : "error"})${reply ? `: ${reply}` : ""}` };
   }
 }

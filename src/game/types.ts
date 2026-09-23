@@ -142,7 +142,7 @@ export type GameState = {
   /** When the villagers last traded (the 5-minute tick). */
   lastTickAt?: number;
   /** The trading desk: when the villagers next look at the market with the AI to place their own trades, and what it said last. */
-  desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo };
+  desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo; error?: string };
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */

@@ -5,7 +5,8 @@ import { createFileRoute } from "@tanstack/react-router";
  * trades by its rules, and when the villagers asked to look again, the
  * trading desk lets them place their own trades with the AI. Called every 5 minutes by the GitHub Actions schedule
  * in .github/workflows/trading.yml with `Authorization: Bearer <CRON_SECRET>`.
- * `?force=1` (still behind the secret) skips the too-soon guard.
+ * `?force=1` (still behind the secret) skips the too-soon guard and asks the
+ * trading desk now; the response says why the desk's AI didn't answer, if not.
  */
 const MIN_GAP_MS = 3 * 60_000;
 
@@ -25,7 +26,7 @@ async function trade(request: Request): Promise<Response> {
   }
   // A petition or review may land at the same moment; re-read and retry rather than overwrite it.
   // The prices and the trading desk's answer are kept across retries, so the AI is asked once.
-  const memo = {};
+  const memo = { force: forced };
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) row = await loadWorldRow();
     const before = row.state.trades?.[0]?.t ?? 0;
@@ -33,7 +34,12 @@ async function trade(request: Request): Promise<Response> {
     if (await saveWorldIfUnchanged(next, row.rev)) {
       const fills = (next.trades ?? []).filter((t) => t.t > before).length;
       const open = next.subjects.filter((s) => s.position).length;
-      const desk = next.desk && next.desk.at === next.lastTickAt ? { orders: next.desk.orders, mind: next.desk.brain?.label ?? "none answered" } : null;
+      const desk = next.desk && next.desk.at === next.lastTickAt ? {
+              orders: next.desk.orders,
+              skipped: next.desk.skipped ?? 0,
+              mind: next.desk.brain?.label ?? "none answered",
+              ...(next.desk.error ? { why: next.desk.error } : {}),
+            } : null;
       return Response.json({ ok: true, fills, openTrades: open, prices: next.tape.source, desk });
     }
   }

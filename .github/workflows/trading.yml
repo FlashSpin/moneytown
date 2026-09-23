@@ -9,7 +9,12 @@ name: Villagers trade
 on:
   schedule:
     - cron: "*/5 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Trade now even if the last tick was under 3 minutes ago, and ask the trading desk now"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -22,6 +27,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SITE_URL: ${{ vars.SITE_URL || 'https://moneytown.vercel.app' }}
+          FORCE: ${{ inputs.force && '?force=1' || '' }}
         run: |
           if [ -z "$CRON_SECRET" ]; then
             echo "::error::Add the CRON_SECRET repository secret (same value as in Vercel)."
@@ -29,4 +35,4 @@ jobs:
           fi
           curl --fail-with-body --silent --show-error --max-time 150 \
             -H "Authorization: Bearer $CRON_SECRET" \
-            "$SITE_URL/api/trade"
+            "$SITE_URL/api/trade$FORCE"

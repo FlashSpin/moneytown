@@ -4,18 +4,20 @@
  *   1. the King studies the markets and each villager's trading, and advises
  *      each one on its day-trading strategy,
  *   2. the villagers hold a council — debate with each other and the King —
- *      and each chooses and tunes its own strategy,
+ *      and each chooses and tunes its own strategy and writes down a lesson
+ *      from its trades (src/game/knowledge.ts),
  *   3. the strategies are stored; the 5-minute trading tick
  *      (src/game/trade.server.ts) trades them.
  * With no AI, each villager keeps its current strategy (or its temperament's
  * default, src/game/strategies.ts).
  */
 import { LIVING_CAP } from "./constants";
-import { marketCoins, priceOf } from "./dawn";
+import { priceOf } from "./dawn";
 import { heuristicTalks } from "./brains";
-import { kingCouncil, parishCouncil, type Council, type CouncilSoul, type ParishCouncil } from "./llm.server";
-import { defaultStrategy, STRATEGY_INFO, unrealized, type Strategy } from "./strategies";
-import { isLiving } from "./trade.server";
+import { kingCouncil, parishCouncil, type Choice, type Council, type ParishCouncil } from "./llm.server";
+import { addLesson } from "./knowledge";
+import { STRATEGY_INFO, unrealized } from "./strategies";
+import { isLiving, soulFor, strategyOf } from "./trade.server";
 import { temperOf } from "./trading";
 import type { GameState, SpeechLine, Subject, Tape } from "./types";
 import { formatGbp, satsToGbp, tapeGbp } from "./wallets";
@@ -33,23 +35,7 @@ export type Review = {
   record: NonNullable<GameState["council"]>;
 };
 
-function currentStrategy(s: Subject, tape: Tape): Strategy {
-  return s.strategy ?? defaultStrategy(s.id, s.temper ?? temperOf(s.id), marketCoins(tape));
-}
-
-function soulFor(s: Subject, tape: Tape): CouncilSoul {
-  return {
-    id: s.id,
-    firstName: s.firstName,
-    balance: s.balance,
-    dayStart: s.dayStart ?? s.balance,
-    temper: s.temper ?? temperOf(s.id),
-    strategy: currentStrategy(s, tape),
-    position: s.position,
-    trades: s.trades,
-    record: s.record,
-  };
-}
+const currentStrategy = strategyOf;
 
 /**
  * The King advises, the villagers debate and choose, and each villager's new
@@ -81,7 +67,7 @@ export async function councilStrategies(
 
   const kingPlan =
     council?.say || "The King holds his counsel; let every soul trade by its own strategy and mind its stops.";
-  const advice = new Map<string, Strategy>(souls.map((s) => [s.id, council?.advice.get(s.id) ?? s.strategy]));
+  const advice = new Map<string, Choice>(souls.map((s) => [s.id, council?.advice.get(s.id) ?? s.strategy]));
 
   const parish = living.length
     ? await parishCouncil({ day: state.day, tape, ticks: state.ticks, kingPlan, advice, souls })
@@ -96,7 +82,9 @@ export async function councilStrategies(
     const was = currentStrategy(s, tape);
     const told = advice.get(s.id)!;
     const chosen = parish?.decisions.get(s.id) ?? { ...told, followsKing: Boolean(council) };
-    const { followsKing, ...strategy } = chosen;
+    const { followsKing, lesson, ...strategy } = chosen;
+    // The villager's own lesson, else the one the King drew for it.
+    const learned = lesson || council?.advice.get(s.id)?.lesson;
     if (council) {
       if (followsKing !== false) followers++;
       else ownWay++;
@@ -110,6 +98,7 @@ export async function councilStrategies(
       advice: told.note || s.advice,
       plan: strategy.note || s.plan,
       followsKing: council ? followsKing !== false : undefined,
+      knowledge: learned ? addLesson(s.knowledge, learned) : s.knowledge,
     };
   });
 

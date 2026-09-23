@@ -123,6 +123,7 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
         strategy: srv.strategy,
         position: srv.position,
         trades: srv.trades,
+        knowledge: srv.knowledge,
         ...(moved ? { destX: srv.destX, destY: srv.destY, state: srv.state } : {}),
       };
     });
@@ -158,6 +159,7 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     lastReviewAt: world.lastReviewAt,
     lastTickAt: world.lastTickAt,
     trades: world.trades,
+    desk: world.desk,
     council: world.council,
     tape: world.tape,
     brain: world.brain,

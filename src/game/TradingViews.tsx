@@ -2,7 +2,8 @@ import { CandlestickChart } from "lucide-react";
 import { formatCoinPrice } from "@/lib/market";
 import { priceOf } from "./dawn";
 import { useGame } from "./store";
-import { STRATEGY_INFO, unrealized, type Position, type Strategy } from "./strategies";
+import type { Knowledge, Tally } from "./knowledge";
+import { coinsLabel, STRATEGY_INFO, unrealized, type Position, type Strategy } from "./strategies";
 import type { Tape } from "./types";
 import { formatPurse } from "./wallets";
 
@@ -46,7 +47,7 @@ export function RollPosition({ strategy, position }: { strategy?: Strategy; posi
   if (!strategy) return <span className="roll-position">FLAT</span>;
   return (
     <span className="roll-position">
-      {STRATEGY_INFO[strategy.kind].label.toUpperCase()} · watching {strategy.coins.join("/")}
+      {STRATEGY_INFO[strategy.kind].label.toUpperCase()} · {strategy.coins.length ? `watching ${strategy.coins.join("/")}` : "scanning all coins"}
     </span>
   );
 }
@@ -57,11 +58,13 @@ export function TradeCard({
   strategy,
   position,
   trades,
+  knowledge,
 }: {
   name: string;
   strategy?: Strategy;
   position?: Position;
   trades?: number;
+  knowledge?: Knowledge;
 }) {
   const tape = useBestTape();
   return (
@@ -69,7 +72,7 @@ export function TradeCard({
       {strategy ? (
         <>
           <p className="trade-card-title">
-            {STRATEGY_INFO[strategy.kind].label} strategy · {strategy.coins.join(", ")}
+            {STRATEGY_INFO[strategy.kind].label} strategy · {coinsLabel(strategy)}
           </p>
           <p className="hint">
             {name} {STRATEGY_INFO[strategy.kind].about}. {Math.round(strategy.sizePct * 100)}% of the purse per trade, take-profit{" "}
@@ -81,7 +84,7 @@ export function TradeCard({
       )}
       {position ? (
         <p className="trade-open">
-          Open: <strong>{position.side.toUpperCase()} {position.coin}</strong> from {formatCoinPrice(position.entryUsd)}, now{" "}
+          Open{position.own ? " (its own call)" : ""}: <strong>{position.side.toUpperCase()} {position.coin}</strong> from {formatCoinPrice(position.entryUsd)}, now{" "}
           {formatCoinPrice(priceOf(tape, position.coin))} ·{" "}
           <Money sats={unrealized(position, priceOf(tape, position.coin))} tape={tape} /> · opened {ago(position.openedAt)}
         </p>
@@ -91,6 +94,65 @@ export function TradeCard({
       <p className="hint">
         {trades ?? 0} {trades === 1 ? "fill" : "fills"} today.
       </p>
+      <Learned name={name} knowledge={knowledge} tape={tape} />
+    </div>
+  );
+}
+
+const tallyLine = (t: Tally) => `${t.w}W/${t.l}L`;
+
+/** What a villager has learned: its best and worst coins, how each approach has paid, and its lessons. */
+function Learned({ name, knowledge, tape }: { name: string; knowledge?: Knowledge; tape: Tape }) {
+  const coins = Object.entries(knowledge?.coins ?? {}).sort((a, b) => b[1].pnl - a[1].pnl);
+  const approaches = Object.entries(knowledge?.approaches ?? {}) as [string, Tally][];
+  if (!knowledge || (!coins.length && !knowledge.lessons.length)) {
+    return <p className="hint">{name} has no experience yet — it learns from every trade it closes.</p>;
+  }
+  const best = coins.slice(0, 3).filter(([, t]) => t.pnl > 0);
+  const worst = coins.slice(-3).reverse().filter(([, t]) => t.pnl < 0);
+  return (
+    <div className="learned">
+      <p className="trade-card-title">What {name} has learned</p>
+      {best.length ? (
+        <p className="hint">
+          Best:{" "}
+          {best.map(([c, t], i) => (
+            <span key={c}>
+              {i ? ", " : ""}
+              {c} {tallyLine(t)} <Money sats={t.pnl} tape={tape} />
+            </span>
+          ))}
+        </p>
+      ) : null}
+      {worst.length ? (
+        <p className="hint">
+          Worst:{" "}
+          {worst.map(([c, t], i) => (
+            <span key={c}>
+              {i ? ", " : ""}
+              {c} {tallyLine(t)} <Money sats={t.pnl} tape={tape} />
+            </span>
+          ))}
+        </p>
+      ) : null}
+      {approaches.length ? (
+        <p className="hint">
+          By approach:{" "}
+          {approaches
+            .map(([a, t]) => `${a === "own" ? "own calls" : (STRATEGY_INFO[a as Strategy["kind"]]?.label.toLowerCase() ?? a)} ${tallyLine(t)}`)
+            .join(", ")}
+        </p>
+      ) : null}
+      {knowledge.lessons.length ? (
+        <ul className="lessons">
+          {knowledge.lessons
+            .slice()
+            .reverse()
+            .map((l) => (
+              <li key={l}>“{l}”</li>
+            ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -99,6 +161,7 @@ export function TradeCard({
 export function TradingFloor() {
   const trades = useGame((s) => s.trades);
   const lastTickAt = useGame((s) => s.lastTickAt);
+  const desk = useGame((s) => s.desk);
   const tape = useBestTape();
   return (
     <section className="trading-floor" aria-label="Trading floor">
@@ -106,8 +169,21 @@ export function TradingFloor() {
         <CandlestickChart size={13} /> Trading floor
         {lastTickAt ? <span className="floor-tick"> · last check {ago(lastTickAt)}</span> : null}
       </p>
+      {desk ? (
+        <p className="desk-line">
+          <strong>Trading desk</strong>
+          {desk.brain ? ` (${desk.brain.label})` : ""}: {desk.say || (desk.brain ? "the villagers hold." : "no AI answered; the strategies trade alone.")}{" "}
+          <span className="floor-tick">
+            {desk.orders ? `${desk.orders} own ${desk.orders === 1 ? "call" : "calls"} · ` : ""}
+            {desk.nextAt > Date.now() ? `next look in ${Math.max(1, Math.round((desk.nextAt - Date.now()) / 60_000))} min` : "looking again soon"}
+          </span>
+        </p>
+      ) : null}
       {!trades?.length ? (
-        <p className="hint">No trades yet. Every 5 minutes each villager&apos;s strategy checks the market and trades when its signal fires.</p>
+        <p className="hint">
+          No trades yet. Every 5 minutes each villager&apos;s strategy scans every coin and trades the strongest signal; at the trading desk they
+          also place their own trades whenever they choose.
+        </p>
       ) : (
         <ol className="floor-list">
           {trades.slice(0, 25).map((t, i) => (
@@ -122,7 +198,11 @@ export function TradingFloor() {
                     <Money sats={t.pnl} tape={tape} />
                   </>
                 ) : null}
-                <span className="floor-why"> — {t.reason}</span>
+                <span className="floor-why">
+                  {" "}
+                  — {t.own ? "own call: " : ""}
+                  {t.reason}
+                </span>
               </span>
             </li>
           ))}

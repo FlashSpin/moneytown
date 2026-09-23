@@ -1,16 +1,20 @@
 /**
  * Day-trading strategies — pure, so they are easy to test.
  *
- * Every villager runs one strategy on a small watchlist, every trading tick
- * (5 minutes): with no position it looks for an entry signal; with one it
- * checks take-profit, stop-loss, a trailing stop, the strategy's own exit
- * signal and a time limit. Each fill pays a fee, like a real exchange. The
- * AI (King's advice + the villagers' council) chooses and tunes strategies a
- * few times a day; the code trades them in between.
+ * Every villager runs one strategy across the whole market (or the coins it
+ * chooses to focus on), every trading tick (5 minutes): with no position it
+ * scans every coin for its entry signal and takes the strongest, weighed by
+ * what it has learned about each coin (./knowledge.ts); with one it checks
+ * take-profit, stop-loss, a trailing stop, the strategy's own exit signal
+ * and a time limit. Each fill pays a fee, like a real exchange. The AI
+ * (King's advice + the villagers' council) chooses and tunes strategies a
+ * few times a day, and at the trading desk each villager may also buy,
+ * short or close on its own call whenever it wants (`deskStep`).
  */
 import { SIZE_DEFAULT, SIZE_MIN, SIZE_WEAK_MAX, WEAK_PURSE_SHARE } from "./constants.ts";
 import type { Asset } from "./dawn.ts";
 import { change, priorRange, rsi, sma } from "./indicators.ts";
+import { avoids, coinEdge, learnTrade, type Approach, type Knowledge } from "./knowledge.ts";
 import type { Temper } from "./trading.ts";
 
 /** Fee per fill (open and close), as a fraction — about what a small account pays an exchange. */
@@ -70,7 +74,7 @@ export const STRATEGY_INFO: Record<
 
 export type Strategy = {
   kind: StrategyKind;
-  /** Coins it watches, 1-3, in order of preference. */
+  /** Coins it focuses on; empty = the whole market (every listed coin). */
   coins: Asset[];
   /** Share of the purse put into each trade (0.1-1). */
   sizePct: number;
@@ -91,6 +95,10 @@ export type Position = {
   openedAt: number;
   /** Best price seen since entry (for the trailing stop). */
   peakUsd: number;
+  /** What opened it: a strategy, or the villager's own call at the desk. */
+  by?: Approach;
+  /** The villager's own targets for a trade it placed itself (instead of its strategy's). */
+  own?: { tp: number; sl: number; maxHoldH: number };
 };
 
 export type TradeEvent = {
@@ -104,6 +112,8 @@ export type TradeEvent = {
   /** Net P&L in sats (closes only), fees included. */
   pnl?: number;
   reason: string;
+  /** The villager's own call at the trading desk, not its strategy's signal. */
+  own?: boolean;
 };
 
 // ── Choosing and tidying strategies ──────────────────────────────────────
@@ -116,28 +126,26 @@ const TEMPER_STRATEGY: Record<Temper, { kind: StrategyKind; size: number; shorts
   steady: { kind: "momentum", size: 0.25, shorts: false },
 };
 
-function hash(id: string): number {
-  let h = 0;
-  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h;
-}
-
-/** A villager's own strategy when no council has chosen one: its temperament's, on its own watchlist. */
-export function defaultStrategy(id: string, temper: Temper, market: Asset[]): Strategy {
+/** A villager's own strategy when no council has chosen one: its temperament's, across the whole market. */
+export function defaultStrategy(_id: string, temper: Temper, _market: Asset[]): Strategy {
   const t = TEMPER_STRATEGY[temper];
   const info = STRATEGY_INFO[t.kind];
-  const pool = market.length ? market : ["BTC"];
-  // Spread the parish: each villager starts at a different place in the market.
-  const start = hash(id) % pool.length;
-  const coins = [0, 1, 2].map((k) => pool[(start + k * 3) % pool.length]!).filter((c, i, a) => a.indexOf(c) === i);
-  return { kind: t.kind, coins, sizePct: t.size, takeProfitPct: info.tp, stopLossPct: info.sl, shorts: t.shorts };
+  return { kind: t.kind, coins: [], sizePct: t.size, takeProfitPct: info.tp, stopLossPct: info.sl, shorts: t.shorts };
 }
+
+/** "the whole market", or the coins a strategy focuses on. */
+export function coinsLabel(s: Pick<Strategy, "coins">): string {
+  return s.coins.length ? s.coins.join("/") : "the whole market";
+}
+
+const ALL_WORDS = new Set(["ALL", "ANY", "MARKET", "WHOLE MARKET", "EVERY", "EVERYTHING", "*"]);
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 /**
- * Tidy a proposed strategy (from the AI or the owner): a known kind, 1-3
- * listed coins, sane size and targets. Unknown pieces fall back to `base`.
+ * Tidy a proposed strategy (from the AI or the owner): a known kind, listed
+ * coins to focus on ("all" or [] = the whole market), sane size and targets.
+ * Unknown pieces fall back to `base`.
  */
 export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[]): Strategy {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -145,8 +153,14 @@ export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[]): St
     ? (String(r.kind ?? r.strategy).toLowerCase() as StrategyKind)
     : base.kind;
   const listed = new Set(market);
-  const coinsIn = Array.isArray(r.coins) ? r.coins : typeof r.coins === "string" ? String(r.coins).split(/[,\s]+/) : [];
-  const coins = [...new Set(coinsIn.map((c) => String(c).trim().toUpperCase()).filter((c) => listed.has(c)))].slice(0, 3);
+  const coinsIn = Array.isArray(r.coins) ? r.coins : typeof r.coins === "string" ? String(r.coins).split(/[,\s/]+/) : null;
+  const words = (coinsIn ?? []).map((c) => String(c).trim().toUpperCase()).filter(Boolean);
+  const wholeMarket =
+    (Array.isArray(r.coins) && r.coins.length === 0) ||
+    (typeof r.coins === "string" && ALL_WORDS.has(r.coins.trim().toUpperCase())) ||
+    words.some((w) => ALL_WORDS.has(w));
+  const focus = [...new Set(words.filter((c) => listed.has(c)))];
+  const coins = wholeMarket ? [] : focus.length ? focus : base.coins;
   const num = (v: unknown) => (typeof v === "number" || typeof v === "string" ? Number(v) : NaN);
   const size = num(r.sizePct ?? r.size);
   const tp = num(r.takeProfitPct ?? r.takeProfit ?? r.tp);
@@ -154,7 +168,7 @@ export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[]): St
   const kindChanged = kind !== base.kind;
   return {
     kind,
-    coins: coins.length ? coins : base.coins,
+    coins,
     sizePct: Number.isFinite(size) && size > 0 ? clamp(size > 1 ? size / 100 : size, SIZE_MIN, 1) : base.sizePct,
     takeProfitPct: Number.isFinite(tp) && tp > 0 ? clamp(tp, 0.5, 15) : kindChanged ? STRATEGY_INFO[kind].tp : base.takeProfitPct,
     stopLossPct: Number.isFinite(sl) && sl > 0 ? clamp(sl, 0.3, 10) : kindChanged ? STRATEGY_INFO[kind].sl : base.stopLossPct,
@@ -165,7 +179,8 @@ export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[]): St
 
 // ── Signals ──────────────────────────────────────────────────────────────
 
-export type Signal = { side: "long" | "short"; reason: string } | null;
+/** An entry signal; `strength` is 1 at the threshold and grows with the move (for picking the best coin). */
+export type Signal = { side: "long" | "short"; reason: string; strength: number } | null;
 
 /** The strategy's entry signal on one coin's price series. */
 export function entrySignal(kind: StrategyKind, s: number[]): Signal {
@@ -173,27 +188,27 @@ export function entrySignal(kind: StrategyKind, s: number[]): Signal {
   switch (kind) {
     case "scalp": {
       const c = change(s, 3)!;
-      if (c > 0.3) return { side: "long", reason: `up ${c.toFixed(2)}% in 15 min` };
-      if (c < -0.3) return { side: "short", reason: `down ${Math.abs(c).toFixed(2)}% in 15 min` };
+      if (c > 0.3) return { side: "long", reason: `up ${c.toFixed(2)}% in 15 min`, strength: c / 0.3 };
+      if (c < -0.3) return { side: "short", reason: `down ${Math.abs(c).toFixed(2)}% in 15 min`, strength: -c / 0.3 };
       return null;
     }
     case "momentum": {
       const c = change(s, 6)!;
-      if (c > 0.8) return { side: "long", reason: `momentum +${c.toFixed(2)}% in 30 min` };
-      if (c < -0.8) return { side: "short", reason: `momentum ${c.toFixed(2)}% in 30 min` };
+      if (c > 0.8) return { side: "long", reason: `momentum +${c.toFixed(2)}% in 30 min`, strength: c / 0.8 };
+      if (c < -0.8) return { side: "short", reason: `momentum ${c.toFixed(2)}% in 30 min`, strength: -c / 0.8 };
       return null;
     }
     case "breakout": {
       const r = priorRange(s, 24)!;
       const last = s[s.length - 1]!;
-      if (last > r.high) return { side: "long", reason: `broke the 2-hour high` };
-      if (last < r.low) return { side: "short", reason: `broke the 2-hour low` };
+      if (last > r.high) return { side: "long", reason: `broke the 2-hour high`, strength: 1 + ((last - r.high) / r.high) * 500 };
+      if (last < r.low) return { side: "short", reason: `broke the 2-hour low`, strength: 1 + ((r.low - last) / r.low) * 500 };
       return null;
     }
     case "reversion": {
       const v = rsi(s, 14)!;
-      if (v < 30) return { side: "long", reason: `oversold, RSI ${v.toFixed(0)}` };
-      if (v > 70) return { side: "short", reason: `overbought, RSI ${v.toFixed(0)}` };
+      if (v < 30) return { side: "long", reason: `oversold, RSI ${v.toFixed(0)}`, strength: 1 + (30 - v) / 10 };
+      if (v > 70) return { side: "short", reason: `overbought, RSI ${v.toFixed(0)}`, strength: 1 + (v - 70) / 10 };
       return null;
     }
     case "trend": {
@@ -201,8 +216,9 @@ export function entrySignal(kind: StrategyKind, s: number[]): Signal {
       const slow = sma(s, 24)!;
       const fastBefore = sma(s, 6, 1)!;
       const slowBefore = sma(s, 24, 1)!;
-      if (fast > slow && fastBefore <= slowBefore) return { side: "long", reason: "30-min average crossed above 2-hour" };
-      if (fast < slow && fastBefore >= slowBefore) return { side: "short", reason: "30-min average crossed below 2-hour" };
+      const gap = 1 + (Math.abs(fast - slow) / slow) * 200;
+      if (fast > slow && fastBefore <= slowBefore) return { side: "long", reason: "30-min average crossed above 2-hour", strength: gap };
+      if (fast < slow && fastBefore >= slowBefore) return { side: "short", reason: "30-min average crossed below 2-hour", strength: gap };
       return null;
     }
   }
@@ -236,7 +252,10 @@ export type Trader = {
   cooldownCoin?: Asset;
   record?: { wins: number; losses: number; pnl: number };
   trades?: number;
+  knowledge?: Knowledge;
 };
+
+type Step = { trader: Trader; event: TradeEvent | null };
 
 /** Stake for a new trade: the strategy's share of the purse, capped for weak purses. */
 export function stakeFor(balance: number, sizePct: number, stakeSats: number): number {
@@ -250,8 +269,57 @@ export function unrealized(p: Position, priceUsd: number): number {
   return Math.round(Math.max(p.stake * move, -p.stake));
 }
 
+/** Close the open position at `px`: pay the fee, bank the P&L, remember how it went. */
+function closeAt(trader: Trader, pos: Position, px: number, now: number, reason: string, own = false): Step {
+  const gross = unrealized(pos, px);
+  const fee = Math.round((pos.stake + gross) * FEE_RATE);
+  const pnl = gross - fee;
+  const r = trader.record ?? { wins: 0, losses: 0, pnl: 0 };
+  return {
+    trader: {
+      ...trader,
+      balance: Math.max(0, trader.balance + pnl),
+      position: undefined,
+      cooldownUntil: now + COOLDOWN_TICKS * TICK_MS,
+      cooldownCoin: pos.coin,
+      record: { wins: r.wins + (pnl > 0 ? 1 : 0), losses: r.losses + (pnl <= 0 ? 1 : 0), pnl: r.pnl + pnl },
+      trades: (trader.trades ?? 0) + 1,
+      knowledge: learnTrade(trader.knowledge, { coin: pos.coin, side: pos.side, approach: pos.by ?? trader.strategy.kind, pnl }),
+    },
+    event: { t: now, id: trader.id, name: trader.firstName, action: "close", coin: pos.coin, side: pos.side, price: px, pnl, reason, ...(own ? { own } : {}) },
+  };
+}
+
+/** Open a position: pay the fee on the stake. */
+function openAt(
+  trader: Trader,
+  open: { coin: Asset; side: "long" | "short"; stake: number; px: number; reason: string; by: Approach; own?: Position["own"] },
+  now: number,
+): Step {
+  const fee = Math.round(open.stake * FEE_RATE);
+  const position: Position = { coin: open.coin, side: open.side, stake: open.stake, entryUsd: open.px, openedAt: now, peakUsd: open.px, by: open.by };
+  if (open.own) position.own = open.own;
+  return {
+    trader: { ...trader, balance: trader.balance - fee, position, trades: (trader.trades ?? 0) + 1 },
+    event: {
+      t: now,
+      id: trader.id,
+      name: trader.firstName,
+      action: "open",
+      coin: open.coin,
+      side: open.side,
+      price: open.px,
+      reason: open.reason,
+      ...(open.own ? { own: true } : {}),
+    },
+  };
+}
+
 /**
- * One tick for one villager: manage the open position, or look for an entry.
+ * One tick for one villager: manage the open position, or scan the market
+ * for an entry. `universe` is every tradable coin; the strategy scans its
+ * focus coins if it has any, else all of them, skips coins it has learned to
+ * avoid, and takes the strongest signal weighed by its record on each coin.
  * Returns the updated trader and what happened (at most one fill per tick).
  */
 export function tradeStep(
@@ -260,61 +328,111 @@ export function tradeStep(
   seriesOf: (coin: Asset) => number[],
   now: number,
   stakeSats: number,
-): { trader: Trader; event: TradeEvent | null } {
+  universe: Asset[] = [],
+): Step {
   const st = trader.strategy;
-  const info = STRATEGY_INFO[st.kind];
   const pos = trader.position;
 
   if (pos) {
     const px = priceOf(pos.coin);
     if (!(px > 0)) return { trader, event: null };
+    // A trade the villager placed itself keeps its own targets; a strategy's trade follows the strategy.
+    const tp = pos.own?.tp ?? st.takeProfitPct;
+    const sl = pos.own?.sl ?? st.stopLossPct;
+    const kind = pos.by && pos.by !== "own" ? pos.by : pos.own ? null : st.kind;
+    const maxHoldH = pos.own?.maxHoldH ?? STRATEGY_INFO[kind ?? st.kind].maxHoldH;
     const peak = pos.side === "long" ? Math.max(pos.peakUsd, px) : Math.min(pos.peakUsd, px);
     const movePct = ((px - pos.entryUsd) / pos.entryUsd) * 100 * (pos.side === "long" ? 1 : -1);
     const fromPeakPct = ((px - peak) / peak) * 100 * (pos.side === "long" ? -1 : 1);
     let reason: string | null = null;
-    if (movePct >= st.takeProfitPct) reason = `take-profit +${movePct.toFixed(2)}%`;
-    else if (movePct <= -st.stopLossPct) reason = `stop-loss ${movePct.toFixed(2)}%`;
-    else if (st.kind === "trend" && movePct > 0 && fromPeakPct >= st.stopLossPct) reason = `trailing stop, ${fromPeakPct.toFixed(2)}% off the peak`;
-    else reason = exitSignal(st.kind, pos.side, seriesOf(pos.coin));
-    if (!reason && now - pos.openedAt >= info.maxHoldH * 3_600_000) reason = `time limit (${info.maxHoldH}h)`;
+    if (movePct >= tp) reason = `take-profit +${movePct.toFixed(2)}%`;
+    else if (movePct <= -sl) reason = `stop-loss ${movePct.toFixed(2)}%`;
+    else if (kind === "trend" && movePct > 0 && fromPeakPct >= sl) reason = `trailing stop, ${fromPeakPct.toFixed(2)}% off the peak`;
+    else if (kind) reason = exitSignal(kind, pos.side, seriesOf(pos.coin));
+    if (!reason && now - pos.openedAt >= maxHoldH * 3_600_000) reason = `time limit (${maxHoldH}h)`;
     if (!reason) return { trader: { ...trader, position: { ...pos, peakUsd: peak } }, event: null };
-
-    const gross = unrealized(pos, px);
-    const fee = Math.round((pos.stake + gross) * FEE_RATE);
-    const pnl = gross - fee;
-    const r = trader.record ?? { wins: 0, losses: 0, pnl: 0 };
-    return {
-      trader: {
-        ...trader,
-        balance: Math.max(0, trader.balance + pnl),
-        position: undefined,
-        cooldownUntil: now + COOLDOWN_TICKS * TICK_MS,
-        cooldownCoin: pos.coin,
-        record: { wins: r.wins + (pnl > 0 ? 1 : 0), losses: r.losses + (pnl <= 0 ? 1 : 0), pnl: r.pnl + pnl },
-        trades: (trader.trades ?? 0) + 1,
-      },
-      event: { t: now, id: trader.id, name: trader.firstName, action: "close", coin: pos.coin, side: pos.side, price: px, pnl, reason },
-    };
+    return closeAt(trader, pos, px, now, reason);
   }
 
-  for (const coin of st.coins) {
+  const scan = st.coins.length ? st.coins : universe.length ? universe : st.coins;
+  let best: { coin: Asset; sig: NonNullable<Signal>; px: number; score: number } | null = null;
+  for (const coin of scan) {
     if (trader.cooldownCoin === coin && (trader.cooldownUntil ?? 0) > now) continue;
+    if (avoids(trader.knowledge, coin)) continue;
     const px = priceOf(coin);
     if (!(px > 0)) continue;
     const sig = entrySignal(st.kind, seriesOf(coin));
     if (!sig || (sig.side === "short" && !st.shorts)) continue;
-    const stake = stakeFor(trader.balance, st.sizePct, stakeSats);
-    if (stake <= 0) return { trader, event: null };
-    const fee = Math.round(stake * FEE_RATE);
-    return {
-      trader: {
-        ...trader,
-        balance: trader.balance - fee,
-        position: { coin, side: sig.side, stake, entryUsd: px, openedAt: now, peakUsd: px },
-        trades: (trader.trades ?? 0) + 1,
-      },
-      event: { t: now, id: trader.id, name: trader.firstName, action: "open", coin, side: sig.side, price: px, reason: sig.reason },
-    };
+    // Coins it has done well on count for more; focus coins win ties in their listed order.
+    const score = Math.min(sig.strength, 5) * (1 + 0.5 * coinEdge(trader.knowledge, coin));
+    if (!best || score > best.score) best = { coin, sig, px, score };
   }
-  return { trader, event: null };
+  if (!best) return { trader, event: null };
+  const stake = stakeFor(trader.balance, st.sizePct, stakeSats);
+  if (stake <= 0) return { trader, event: null };
+  return openAt(trader, { coin: best.coin, side: best.sig.side, stake, px: best.px, reason: best.sig.reason, by: st.kind }, now);
+}
+
+// ── The villager's own calls, from the trading desk ──────────────────────
+
+export type DeskOrder = {
+  action: "buy" | "short" | "close";
+  coin?: Asset;
+  /** Share of the purse (0.05-1). */
+  sizePct?: number;
+  tp?: number;
+  sl?: number;
+  hours?: number;
+  why: string;
+};
+
+/**
+ * Carry out a villager's own order from the trading desk, at market: close
+ * its trade, or open one of its choosing (closing a different open trade
+ * first — a switch is two fills). Orders it can't carry out (no price, no
+ * purse, the coin it has just left) do nothing.
+ */
+export function deskStep(
+  trader: Trader,
+  order: DeskOrder,
+  priceOf: (coin: Asset) => number,
+  now: number,
+  stakeSats: number,
+): { trader: Trader; events: TradeEvent[] } {
+  const why = order.why || "its own call";
+  const events: TradeEvent[] = [];
+  let t = trader;
+  if (order.action === "close") {
+    const pos = t.position;
+    const px = pos ? priceOf(pos.coin) : 0;
+    if (!pos || !(px > 0)) return { trader, events };
+    const step = closeAt(t, pos, px, now, why, true);
+    return { trader: step.trader, events: [step.event!] };
+  }
+  const coin = order.coin;
+  const side = order.action === "buy" ? "long" : "short";
+  const px = coin ? priceOf(coin) : 0;
+  if (!coin || !(px > 0)) return { trader, events };
+  if (t.position?.coin === coin && t.position.side === side) return { trader, events };
+  if (t.position) {
+    const held = t.position;
+    const heldPx = priceOf(held.coin);
+    if (!(heldPx > 0)) return { trader, events };
+    const step = closeAt(t, held, heldPx, now, `switching to ${side === "long" ? "buy" : "short"} ${coin}`, true);
+    t = { ...step.trader, cooldownUntil: undefined, cooldownCoin: undefined };
+    events.push(step.event!);
+  } else if (t.cooldownCoin === coin && (t.cooldownUntil ?? 0) > now) {
+    return { trader, events };
+  }
+  const size = clamp(order.sizePct ?? t.strategy.sizePct, 0.05, 1);
+  const stake = stakeFor(t.balance, size, stakeSats);
+  if (stake <= 0) return { trader: t, events };
+  const own = {
+    tp: clamp(order.tp ?? t.strategy.takeProfitPct, 0.5, 15),
+    sl: clamp(order.sl ?? t.strategy.stopLossPct, 0.3, 10),
+    maxHoldH: clamp(order.hours ?? 12, 0.25, 48),
+  };
+  const step = openAt(t, { coin, side, stake, px, reason: why, by: "own", own }, now);
+  events.push(step.event!);
+  return { trader: step.trader, events };
 }

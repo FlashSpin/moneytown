@@ -94,3 +94,64 @@ migrations only ever add tables, columns and indexes, so rolling the code back i
 - The client bundle is ~127 kB gzipped; the backtest page is its own chunk.
 - A trading tick is one world read (world + ledger balances in a single statement), one Kraken ticker call
   (cached 15 s), at most one free AI call when the desk is due, and one atomic save.
+
+## Operator controls
+
+| Control | How | Effect |
+|---|---|---|
+| Halt all trading | Seal: "halt trading" · or env `TRADING_HALT=1` | No new trades open; open ones are still managed and closed by their stops. |
+| Resume | Seal: "resume trading" · remove `TRADING_HALT` | Lifts a halt, including one set by a failed ledger check. |
+| Pause one strategy | Seal: "pause the scalp strategy" | That strategy opens nothing; the villager's own desk calls and other strategies carry on. "resume scalp" lifts it. |
+| Switch off the AI desk | env `TRADING_DESK=off` | Strategies trade alone; no desk AI calls. |
+| Switch off a data source | env `DISABLE_SOURCES=coingecko,trending` (any of kraken, coingecko, trending, feargreed, coinbase) | That source isn't called; prices come from the rest, or the tape goes dark and nobody trades. |
+
+Env changes take effect on the next deploy (Vercel → Settings → Environment Variables → redeploy).
+
+## Security
+
+**Who can do what.** The site has one shared town and no accounts. Anyone can watch and petition the King
+(rate-limited, capped per day). The **royal seal** (`KING_SEAL`) is the owner's key: banish, tax, favoured
+coin, strategies, halt and pause. The **scheduler secret** (`CRON_SECRET`) is for `/api/trade`, `/api/tick`,
+`/api/review` and `POST /api/backtest`. Public read-only endpoints: `/api/health`, `/api/ledger`,
+`GET /api/backtest`, and `POST /api/heartbeat` (can only run a trading tick that is already due).
+
+**How they're checked.** Both secrets are compared in constant time. The seal passphrase is typed once; the
+browser keeps a signed token that expires after 30 days (never the passphrase). Wrong guesses at the
+passphrase are recorded (by a salted hash of the caller's address) and lock that address out after 10 in an
+hour, or everyone after 100 in ten minutes; an owner with a token is unaffected.
+
+**Secrets.** They live only in Vercel's environment and the `CRON_SECRET` repository secret — never in code,
+chat or the browser. Log lines are scrubbed of every secret's value. Use a seal of 16+ random characters.
+
+**Headers.** Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
+`Permissions-Policy` and `Strict-Transport-Security`. There is no frame-blocking header, because the app is
+shown inside the builder's preview.
+
+**Checks on every pull request** (`.github/workflows/ci.yml`): typecheck, lint, the app's tests, a production
+build, and `npm audit` (high/critical in production dependencies fail). Turn on GitHub's secret scanning and
+Dependabot alerts in the repository settings as well.
+
+### Rotating a secret
+
+- **Royal seal:** set a new `KING_SEAL` in Vercel and redeploy. Every seal token is void at once; present
+  the new passphrase again.
+- **Scheduler secret:** set a new `CRON_SECRET` in Vercel **and** the GitHub repository secret **and** any
+  external cron, then redeploy.
+- **AI keys:** create a new key with the provider, replace it in Vercel, redeploy, then delete the old key at
+  the provider.
+- **Database:** reset the password in Neon, update `DATABASE_URL` in Vercel, redeploy.
+
+### If you suspect a leak or an attack
+
+1. Halt trading (seal or `TRADING_HALT=1`).
+2. Rotate the secret that may have leaked (above).
+3. Check `/api/ledger` (books reconcile? any unbalanced events?) and `/api/health` (failures, triggers).
+4. Search the Vercel logs for `seal.wrong_guess`, `401`s and unusual `requestId`s.
+5. If the world was changed wrongly, restore from Neon's point-in-time history (see Backups).
+6. Resume trading once the cause is fixed.
+
+### Before any real money
+
+This is a paper-trading game. A real exchange connection would need its own review first — see
+`docs/real-money-kraken.md`: a key with trade-only permission (**never withdrawal**), an IP allow-list,
+kept only on the server, and separate from the game.

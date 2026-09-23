@@ -192,5 +192,5 @@ export type GameState = {
   /** Coins whose big move has been chronicled today. */
   marketNotes?: { day: number; coins: string[] };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
-  decree?: { taxRate?: number; favorAsset?: Asset };
+  decree?: { taxRate?: number; favorAsset?: Asset; paused?: import("./strategies.ts").StrategyKind[] };
 };

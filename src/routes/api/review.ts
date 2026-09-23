@@ -9,11 +9,8 @@ import { REVIEW_MIN_HOURS } from "@/game/constants";
  * `?force=1` (still behind the secret) skips the too-soon guard.
  */
 async function review(request: Request): Promise<Response> {
-  const { env } = await import("@/lib/env.server");
-  const secret = env("CRON_SECRET");
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  const { bearerOk } = await import("@/lib/seal.server");
+  if (!bearerOk(request)) return new Response("Unauthorized", { status: 401 });
 
   const { loadWorldRow, saveWorldIfUnchanged } = await import("@/lib/world.server");
   const { runReview } = await import("@/game/tick.server");

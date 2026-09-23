@@ -293,9 +293,10 @@ export const useGame = create<Store>((set, get) => ({
     if (!seal) return false;
     try {
       const res = await presentSeal({ data: { seal } });
-      if (!res.sovereign) return false;
-      writeSeal(seal);
-      set({ seal, sovereign: true });
+      if (!res.sovereign || !res.token) return false;
+      // Keep the signed token, never the passphrase.
+      writeSeal(res.token);
+      set({ seal: res.token, sovereign: true });
       return true;
     } catch {
       return false;
@@ -312,8 +313,11 @@ export const useGame = create<Store>((set, get) => ({
     if (!seal) return;
     try {
       const res = await presentSeal({ data: { seal } });
-      if (res.sovereign) set({ seal, sovereign: true });
-      else if (!res.throttled) writeSeal(null);
+      if (res.sovereign && res.token) {
+        // A fresh token (and a passphrase kept by an older version becomes a token).
+        writeSeal(res.token);
+        set({ seal: res.token, sovereign: true });
+      } else if (!res.throttled) writeSeal(null);
     } catch {
       // Offline: try again on the next page load.
     }

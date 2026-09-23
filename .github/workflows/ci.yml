@@ -1,0 +1,39 @@
+# Checks every pull request and every push to main: types, lint, the app's
+# tests, a production build, and a dependency audit (high or critical
+# vulnerabilities in production dependencies fail the run).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm run test:app
+      - name: Build
+        run: npm run build
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high

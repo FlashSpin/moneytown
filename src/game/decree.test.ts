@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { needsSeal, parseCommand, parseFavor, parseHalt, parseTaxPercent, resolveBanish } from "./decree.ts";
+import { needsSeal, parseCommand, parseFavor, parseHalt, parseKinds, parseTaxPercent, resolveBanish } from "./decree.ts";
 
 describe("royal commands are held to the law", () => {
   it("reads tax as percent or fraction, clamped to 0-60%", () => {
@@ -35,7 +35,7 @@ describe("royal commands are held to the law", () => {
 
   it("parses a full command and knows what needs the seal", () => {
     const c = parseCommand({ summon: "2", banish: ["Hugh"], taxRate: 12, favorAsset: "sol" }, ["BTC", "SOL"]);
-    assert.deepEqual(c, { summon: 2, banish: ["Hugh"], taxRate: 0.12, favorAsset: "SOL", strategies: [], halt: null });
+    assert.deepEqual(c, { summon: 2, banish: ["Hugh"], taxRate: 0.12, favorAsset: "SOL", strategies: [], halt: null, pause: [], resume: [] });
     assert.equal(needsSeal(c), true);
     assert.equal(needsSeal(parseCommand({ summon: 1 }, [])), false);
     assert.equal(needsSeal(parseCommand({ banish: [], taxRate: null }, [])), false);
@@ -54,5 +54,15 @@ describe("halting trading", () => {
     assert.equal(parseHalt("maybe"), null);
     assert.equal(needsSeal(parseCommand({ halt: "halt" }, [])), true);
     assert.equal(parseCommand({}, []).halt, null);
+  });
+});
+
+describe("pausing a strategy", () => {
+  it("reads the strategies to pause or resume, and needs the seal", () => {
+    assert.deepEqual(parseKinds(["Scalp", "nonsense", "scalp", "trend"]), ["scalp", "trend"]);
+    assert.deepEqual(parseKinds("momentum, breakout"), ["momentum", "breakout"]);
+    assert.deepEqual(parseKinds(undefined), []);
+    assert.equal(needsSeal(parseCommand({ pause: ["scalp"] }, [])), true);
+    assert.equal(needsSeal(parseCommand({ resume: "trend" }, [])), true);
   });
 });

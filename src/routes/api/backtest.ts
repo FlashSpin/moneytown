@@ -10,11 +10,8 @@ import { createFileRoute } from "@tanstack/react-router";
  * Called by .github/workflows/backtest.yml.
  */
 async function run(request: Request): Promise<Response> {
-  const { env } = await import("@/lib/env.server");
-  const secret = env("CRON_SECRET");
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  const { bearerOk } = await import("@/lib/seal.server");
+  if (!bearerOk(request)) return new Response("Unauthorized", { status: 401 });
   const url = new URL(request.url);
   const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 30));
   const count = Math.min(50, Math.max(1, Number(url.searchParams.get("coins")) || 20));

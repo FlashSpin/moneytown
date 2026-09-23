@@ -38,23 +38,47 @@ async function visitorKey(): Promise<string> {
   return getRequestIP({ xForwardedFor: true }) ?? "unknown";
 }
 
+/**
+ * Check what a visitor offered as the seal: a signed token (checked, never
+ * counted as a guess), or the passphrase (refused while this address or the
+ * whole site is locked out; a wrong one is recorded). Nothing offered is
+ * simply a commoner.
+ */
+async function checkSeal(offered: string | undefined): Promise<{ sovereign: boolean; locked?: string }> {
+  if (!offered) return { sovereign: false };
+  const { holdsSeal, holdsSealToken, looksLikeToken } = await import("./seal.server");
+  if (looksLikeToken(offered)) return { sovereign: holdsSealToken(offered) };
+  const { keyFor, lockedOut, recordFailure } = await import("./lockout.server");
+  const key = keyFor(await visitorKey());
+  const locked = await lockedOut(key);
+  if (locked) return { sovereign: false, locked };
+  const ok = holdsSeal(offered);
+  if (!ok) await recordFailure(key);
+  return { sovereign: ok };
+}
+
 /** Speak to the King. He answers, and may act on the petition within the crown's rules. */
 export const petitionTheKing = createServerFn({ method: "POST" })
   .validator((data: unknown) => PetitionInput.parse(data))
   .handler(async ({ data }): Promise<PetitionResult | { throttled: true }> => {
-    const { holdsSeal } = await import("./seal.server");
-    const sovereign = holdsSeal(data.seal);
+    const { sovereign } = await checkSeal(data.seal);
     // The seal-bearer isn't throttled; everyone else (wrong-seal guesses included) is.
     if (!sovereign && throttled(await visitorKey())) return { throttled: true };
     const { petitionKing } = await import("@/game/petition.server");
     return petitionKing(data.message, data.history, sovereign);
   });
 
-/** Check a royal seal passphrase without speaking to the King. */
+/**
+ * Present the royal seal (the passphrase once, or a token from before).
+ * Answers with a fresh signed token to keep instead of the passphrase.
+ */
 export const presentSeal = createServerFn({ method: "POST" })
   .validator((data: unknown) => z.object({ seal: z.string().max(200) }).parse(data))
-  .handler(async ({ data }): Promise<{ sovereign: boolean; throttled?: true }> => {
+  .handler(async ({ data }): Promise<{ sovereign: boolean; token?: string; throttled?: true; reason?: string }> => {
     if (throttled(await visitorKey())) return { sovereign: false, throttled: true };
-    const { holdsSeal } = await import("./seal.server");
-    return { sovereign: holdsSeal(data.seal) };
+    const res = await checkSeal(data.seal);
+    if (res.locked) return { sovereign: false, throttled: true, reason: res.locked };
+    if (!res.sovereign) return { sovereign: false };
+    const { sealToken } = await import("./seal.server");
+    return { sovereign: true, token: sealToken() ?? undefined };
   });

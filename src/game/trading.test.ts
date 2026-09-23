@@ -150,3 +150,14 @@ describe("villagers trade in their own way", () => {
     assert.deepEqual(r, { wins: 1, losses: 1, pnl: 300 });
   });
 });
+
+describe("which stalls stand", () => {
+  it("uses the world's list, else the live feed's for an older world", async () => {
+    const { stallCoins } = await import("./dawn.ts");
+    const old = { assets: { BTC: { usd: 1 }, ETH: { usd: 1 }, SOL: { usd: 1 } } };
+    const live = { coins: ["BTC", "ETH", "XRP", "SOL"], assets: {} };
+    assert.deepEqual(stallCoins(old, live), ["BTC", "ETH", "XRP", "SOL"]);
+    assert.deepEqual(stallCoins({ ...old, coins: ["BTC", "DOGE"] }, live), ["BTC", "DOGE"]);
+    assert.deepEqual(stallCoins(old, null), ["BTC", "ETH", "SOL"]);
+  });
+});

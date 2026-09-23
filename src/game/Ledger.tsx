@@ -1,7 +1,7 @@
 import { Crown, ScrollText } from "lucide-react";
 import { HANG_BELOW_GBP, LIVING_CAP, RENT_GBP } from "./constants";
 import { KingAudience } from "./KingAudience";
-import { marketCoins } from "./dawn";
+import { stallCoins } from "./dawn";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
 import { CouncilPanel } from "./CouncilPanel";
@@ -63,7 +63,7 @@ function MarketLine() {
   const live = useGame((s) => s.liveTape);
   const tape = live && !live.dark ? live : world;
   if (tape.dark) return <p className="hint market-line">Market: prices unavailable — villagers sit out until they return.</p>;
-  const n = marketCoins(world).length;
+  const n = Math.min(20, stallCoins(world, live).length);
   const mins = tape.fetchedAt ? Math.max(0, Math.round((Date.now() - tape.fetchedAt) / 60_000)) : null;
   return (
     <p className="hint market-line">

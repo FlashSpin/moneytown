@@ -4,7 +4,7 @@
  * what the rules allow (known names only, tax clamped to the legal range).
  */
 import { TAX_MAX, TAX_MIN } from "./constants.ts";
-import { ASSETS, type Asset } from "./dawn.ts";
+import type { Asset } from "./dawn.ts";
 
 /** A proposed change: a new value, "auto" (hand the choice back to the King's AI at dawn), or no change. */
 export type DecreeChange<T> = T | "auto" | null;
@@ -30,15 +30,19 @@ export function parseTaxPercent(v: unknown): DecreeChange<number> {
   return Math.round(Math.min(TAX_MAX, Math.max(TAX_MIN, frac)) * 100) / 100;
 }
 
-export function parseFavor(v: unknown): DecreeChange<Asset> {
+/** A favoured coin: must be one the market lists (`coins`), or "auto". */
+export function parseFavor(v: unknown, coins: Asset[]): DecreeChange<Asset> {
   if (v == null || v === "") return null;
   const s = String(v).trim().toUpperCase();
   if (s === "AUTO") return "auto";
-  return (ASSETS as string[]).includes(s) ? (s as Asset) : null;
+  return coins.includes(s) ? s : null;
 }
 
 /** The AI's raw JSON → a command. Unknown or malformed fields mean "no change". */
-export function parseCommand(obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown }): Command {
+export function parseCommand(
+  obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown },
+  coins: Asset[],
+): Command {
   const summon = Number(obj.summon);
   const banish = Array.isArray(obj.banish)
     ? obj.banish.map((x) => String(x ?? "").trim()).filter(Boolean).slice(0, 24)
@@ -49,7 +53,7 @@ export function parseCommand(obj: { summon?: unknown; banish?: unknown; taxRate?
     summon: Number.isFinite(summon) ? Math.max(0, Math.floor(summon)) : 0,
     banish,
     taxRate: parseTaxPercent(obj.taxRate),
-    favorAsset: parseFavor(obj.favorAsset),
+    favorAsset: parseFavor(obj.favorAsset, coins),
   };
 }
 

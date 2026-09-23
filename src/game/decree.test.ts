@@ -15,11 +15,13 @@ describe("royal commands are held to the law", () => {
     assert.equal(parseTaxPercent("lots"), null);
   });
 
-  it("accepts only tradable assets as the favoured market", () => {
-    assert.equal(parseFavor("eth"), "ETH");
-    assert.equal(parseFavor("DOGE"), null);
-    assert.equal(parseFavor("auto"), "auto");
-    assert.equal(parseFavor(undefined), null);
+  it("accepts only coins the market lists as the favoured market", () => {
+    const coins = ["BTC", "ETH", "SOL", "DOGE"];
+    assert.equal(parseFavor("eth", coins), "ETH");
+    assert.equal(parseFavor("doge", coins), "DOGE");
+    assert.equal(parseFavor("FAKECOIN", coins), null);
+    assert.equal(parseFavor("auto", coins), "auto");
+    assert.equal(parseFavor(undefined, coins), null);
   });
 
   it("banishes only souls that exist, never twice", () => {
@@ -32,10 +34,10 @@ describe("royal commands are held to the law", () => {
   });
 
   it("parses a full command and knows what needs the seal", () => {
-    const c = parseCommand({ summon: "2", banish: ["Hugh"], taxRate: 12, favorAsset: "sol" });
+    const c = parseCommand({ summon: "2", banish: ["Hugh"], taxRate: 12, favorAsset: "sol" }, ["BTC", "SOL"]);
     assert.deepEqual(c, { summon: 2, banish: ["Hugh"], taxRate: 0.12, favorAsset: "SOL" });
     assert.equal(needsSeal(c), true);
-    assert.equal(needsSeal(parseCommand({ summon: 1 })), false);
-    assert.equal(needsSeal(parseCommand({ banish: [] , taxRate: null })), false);
+    assert.equal(needsSeal(parseCommand({ summon: 1 }, [])), false);
+    assert.equal(needsSeal(parseCommand({ banish: [], taxRate: null }, [])), false);
   });
 });

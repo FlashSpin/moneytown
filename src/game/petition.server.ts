@@ -25,7 +25,8 @@ import {
   SUMMONS_PER_PETITION,
   TAX_MAX,
 } from "./constants";
-import { ASSETS } from "./dawn";
+import { marketCoins } from "./dawn";
+import { formatCoinPrice } from "@/lib/market";
 import { temperOf } from "./trading";
 import { needsSeal, parseCommand, parseFavor, parseTaxPercent, resolveBanish, type Command } from "./decree";
 import { defaultKingPolicy, petitionSummonCount } from "./economy";
@@ -110,12 +111,14 @@ function rosterLines(state: GameState): string {
 
 function marketsLine(state: GameState): string {
   const t = state.tape;
-  const assets = ASSETS.map((a) => {
-    const info = t.assets[a];
-    if (!(info.usd > 0)) return `${a} (no price)`;
-    const sign = info.change24h >= 0 ? "+" : "";
-    return `${a} $${Math.round(info.usd).toLocaleString("en-US")} (${sign}${info.change24h.toFixed(1)}% 24h)`;
-  }).join(", ");
+  const assets = marketCoins(t)
+    .map((a) => {
+      const info = t.assets[a];
+      if (!info || !(info.usd > 0)) return `${a} (no price)`;
+      const sign = info.change24h >= 0 ? "+" : "";
+      return `${a} ${formatCoinPrice(info.usd)} (${sign}${info.change24h.toFixed(1)}% 24h)`;
+    })
+    .join(", ");
   return `${assets}. Fear & greed: ${t.fearGreed} (${t.fearGreedLabel}).${t.dark ? " The price tape is dark today." : ""}`;
 }
 
@@ -130,7 +133,7 @@ function kingPrompt(state: GameState, history: PetitionTurn[], message: string, 
     ? `The speaker BEARS THE ROYAL SEAL: they are the true power behind the throne. Carry out their commands faithfully — summon, banish named souls, set the tax (0-${Math.round(TAX_MAX * 100)}%), or set the favoured market.`
     : `The speaker is a COMMONER without the royal seal. They may ask for counsel, news of the villagers, or for new souls to be summoned. If they order a banishment, a new tax, or a new favoured market, refuse with regal disdain (only the bearer of the royal seal may command such things) and leave those fields empty.`;
 
-  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; every few hours you advise each one, then they debate at their council and each decides its own trade (LONG, SHORT or FLAT on BTC, ETH or SOL, with part of the purse at risk). Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which asset, long or short, and why). Keep it to at most 4 short sentences.
+  return `You are the KING of Ledgerford, a 16th-century English market town. Every villager is an AI trading agent you staked from your treasury; every few hours you advise each one, then they debate at their council and each decides its own trade (LONG, SHORT or FLAT on one of the top coins traded on the Kraken exchange, each with its own stall in the town, with part of the purse at risk). Each dawn you take your tax from the day's PROFIT only, plus £${RENT_GBP} upkeep; a purse below £${HANG_BELOW_GBP} hangs. Answer in character — regal, witty, period English — but make the substance useful: when asked about the villagers, report real figures from the roll below; when asked for strategy, give concrete trading counsel from the markets below (which coin, long or short, and why). Keep it to at most 4 short sentences.
 
 ${speaker}
 
@@ -151,10 +154,10 @@ Reply with JSON only:
 - summon: how many new souls to summon now (0 if not asked; grant courteous requests).
 - banish: first names to remove from the parish (seal-bearer only; "the poorest" etc. means pick from the roll).
 - taxRate: a whole percent to set the tax to, "auto" to let yourself choose it each dawn again, or null for no change (seal-bearer only).
-- favorAsset: "BTC", "ETH" or "SOL" to fix the favoured market, "auto" to choose it yourself each dawn again, or null (seal-bearer only).`;
+- favorAsset: a coin symbol from the markets list to fix the favoured market, "auto" to choose it yourself each dawn again, or null (seal-bearer only).`;
 }
 
-function parseDecision(text: string): Omit<Decision, "brain"> | null {
+function parseDecision(text: string, coins: string[]): Omit<Decision, "brain"> | null {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
@@ -162,7 +165,7 @@ function parseDecision(text: string): Omit<Decision, "brain"> | null {
     const obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
     const say = String(obj.say ?? "").replace(/\s+/g, " ").trim().slice(0, 600);
     if (!say) return null;
-    return { say, ...parseCommand(obj) };
+    return { say, ...parseCommand(obj, coins) };
   } catch {
     return null;
   }
@@ -197,9 +200,10 @@ function heuristicDecision(state: GameState, message: string, sovereign: boolean
     return { ...none, say: `By Our decree, the tax is now ${Math.round(Number(rate) * 100)}%.`, taxRate: rate };
   }
 
-  const favorMatch = lower.match(/\b(?:favou?r|back|go long on|trade)\s+(btc|eth|sol)\b/);
-  if (favorMatch && sovereign) {
-    const asset = parseFavor(favorMatch[1]);
+  const favorMatch = lower.match(/\b(?:favou?r|back|go long on|trade)\s+([a-z0-9]{2,10})\b/);
+  const favored = favorMatch ? parseFavor(favorMatch[1], marketCoins(state.tape)) : null;
+  if (favored && sovereign) {
+    const asset = favored;
     return { ...none, say: `So be it — the crown favours ${asset} in the markets.`, favorAsset: asset };
   }
 
@@ -241,7 +245,7 @@ function heuristicDecision(state: GameState, message: string, sovereign: boolean
 
 async function decide(state: GameState, history: PetitionTurn[], message: string, sovereign: boolean): Promise<Decision> {
   const res = await askCounsel(kingPrompt(state, history, message, sovereign));
-  const parsed = res.ok ? parseDecision(res.text) : null;
+  const parsed = res.ok ? parseDecision(res.text, marketCoins(state.tape)) : null;
   if (res.ok && parsed) return { ...parsed, brain: BRAIN_LABELS[res.source] };
   return { ...heuristicDecision(state, message, sovereign), brain: null };
 }

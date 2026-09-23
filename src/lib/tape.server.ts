@@ -1,9 +1,27 @@
-import type { Asset } from "@/game/dawn";
+/**
+ * The live price tape — server-only. The parish trades the top coins by
+ * market cap that the Kraken exchange lists (src/lib/market.ts):
+ *   - Kraken's AssetPairs says what it trades (cached for hours),
+ *   - CoinGecko's market-cap table says which of those are the top 20
+ *     (and is the fallback price source),
+ *   - one Kraken Ticker call prices them all, plus Bitcoin in pounds.
+ * Coins a villager still holds are priced even after they leave the top 20.
+ */
 import type { Tape } from "@/game/types";
+import {
+  krakenGbpKey,
+  parseGeckoMarkets,
+  parseKrakenPairs,
+  parseKrakenTicker,
+  pickTopCoins,
+  type KrakenPair,
+  type MarketCoin,
+} from "./market";
 
-type FearPayload = {
-  data?: { value?: string; value_classification?: string }[];
-};
+/** How many coins the market lists — one stall each in the town. */
+export const MARKET_SIZE = 20;
+
+type FearPayload = { data?: { value?: string; value_classification?: string }[] };
 
 function fngLabel(n: number): string {
   if (n <= 24) return "Extreme fear";
@@ -13,118 +31,73 @@ function fngLabel(n: number): string {
   return "Extreme greed";
 }
 
-async function fetchJson(url: string, timeoutMs = 4500): Promise<unknown> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+async function fetchJson(url: string, timeoutMs = 6000): Promise<unknown> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+// ── Kraken ────────────────────────────────────────────────────────────────
+
+const PAIRS_TTL_MS = 12 * 3_600_000;
+let pairsCache: { at: number; usd: Map<string, KrakenPair>; gbpKey: string | null } | null = null;
+
+async function krakenPairs(): Promise<{ usd: Map<string, KrakenPair>; gbpKey: string | null } | null> {
+  if (pairsCache && Date.now() - pairsCache.at < PAIRS_TTL_MS) return pairsCache;
   try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { accept: "application/json" },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(t);
+    const body = await fetchJson("https://api.kraken.com/0/public/AssetPairs");
+    const usd = parseKrakenPairs(body);
+    if (!usd.size) return pairsCache;
+    pairsCache = { at: Date.now(), usd, gbpKey: krakenGbpKey(body) };
+    return pairsCache;
+  } catch {
+    return pairsCache; // a stale list beats none
   }
 }
 
-async function binanceTape(): Promise<{
-  btcUsd: number;
-  change24h: number;
-  source: string;
-} | null> {
+async function krakenTicker(keys: string[]): Promise<Map<string, { usd: number; change24h: number }>> {
+  if (!keys.length) return new Map();
   try {
-    const raw = (await fetchJson("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT")) as {
-      lastPrice?: string;
-      priceChangePercent?: string;
-    };
-    const btcUsd = Number(raw.lastPrice);
-    const change24h = Number(raw.priceChangePercent);
-    if (!Number.isFinite(btcUsd) || btcUsd <= 0) return null;
-    return {
-      btcUsd,
-      change24h: Number.isFinite(change24h) ? change24h : 0,
-      source: "Binance",
-    };
+    return parseKrakenTicker(await fetchJson(`https://api.kraken.com/0/public/Ticker?pair=${keys.join(",")}`));
   } catch {
-    return null;
+    return new Map();
   }
 }
 
-async function coinbaseSpot(): Promise<number | null> {
+// ── CoinGecko (ranking + fallback prices) ────────────────────────────────
+
+const MARKETS_TTL_MS = 30 * 60_000;
+let marketsCache: { at: number; coins: MarketCoin[] } | null = null;
+
+/**
+ * The market-cap table. `fresh` is false when it's an old copy kept after a
+ * failed fetch: still fine for the ranking, but its prices are too old to use.
+ */
+async function geckoMarkets(): Promise<{ coins: MarketCoin[]; fresh: boolean }> {
+  if (marketsCache && Date.now() - marketsCache.at < MARKETS_TTL_MS) return { coins: marketsCache.coins, fresh: true };
   try {
-    const raw = (await fetchJson("https://api.coinbase.com/v2/prices/BTC-USD/spot")) as {
-      data?: { amount?: string };
-    };
-    const n = Number(raw.data?.amount);
-    return Number.isFinite(n) && n > 0 ? n : null;
+    const coins = parseGeckoMarkets(
+      await fetchJson(
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=80&page=1",
+      ),
+    );
+    if (coins.length) {
+      marketsCache = { at: Date.now(), coins };
+      return { coins, fresh: true };
+    }
   } catch {
-    return null;
+    // fall through to the old copy
   }
+  return { coins: marketsCache?.coins ?? [], fresh: false };
 }
 
-async function coinbaseChange(): Promise<number | null> {
-  try {
-    const raw = (await fetchJson("https://api.exchange.coinbase.com/products/BTC-USD/stats")) as {
-      last?: string;
-      open?: string;
-    };
-    const last = Number(raw.last);
-    const open = Number(raw.open);
-    if (!Number.isFinite(last) || !Number.isFinite(open) || open <= 0) return null;
-    return ((last - open) / open) * 100;
-  } catch {
-    return null;
-  }
-}
+// ── Other sources: Bitcoin in pounds, and the fear & greed index ─────────
 
 async function coinbaseGbp(): Promise<number | null> {
   try {
-    const raw = (await fetchJson("https://api.coinbase.com/v2/prices/BTC-GBP/spot")) as {
-      data?: { amount?: string };
-    };
+    const raw = (await fetchJson("https://api.coinbase.com/v2/prices/BTC-GBP/spot")) as { data?: { amount?: string } };
     const n = Number(raw.data?.amount);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-type GeckoAsset = { usd: number; change24h: number };
-
-/** One request for BTC (still the economy's primary source elsewhere) plus ETH/SOL for trading. */
-async function geckoTape(): Promise<{
-  btcUsd: number;
-  btcGbp: number;
-  change24h: number;
-  eth: GeckoAsset | null;
-  sol: GeckoAsset | null;
-} | null> {
-  try {
-    const raw = (await fetchJson(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd,gbp&include_24hr_change=true",
-    )) as {
-      bitcoin?: { usd?: number; gbp?: number; usd_24h_change?: number };
-      ethereum?: { usd?: number; usd_24h_change?: number };
-      solana?: { usd?: number; usd_24h_change?: number };
-    };
-    const btcUsd = Number(raw.bitcoin?.usd);
-    const btcGbp = Number(raw.bitcoin?.gbp);
-    const change24h = Number(raw.bitcoin?.usd_24h_change);
-    if (!Number.isFinite(btcUsd) || btcUsd <= 0) return null;
-    const asAsset = (a?: { usd?: number; usd_24h_change?: number }): GeckoAsset | null => {
-      const usd = Number(a?.usd);
-      if (!Number.isFinite(usd) || usd <= 0) return null;
-      const chg = Number(a?.usd_24h_change);
-      return { usd, change24h: Number.isFinite(chg) ? chg : 0 };
-    };
-    return {
-      btcUsd,
-      btcGbp: Number.isFinite(btcGbp) && btcGbp > 0 ? btcGbp : 0,
-      change24h: Number.isFinite(change24h) ? change24h : 0,
-      eth: asAsset(raw.ethereum),
-      sol: asAsset(raw.solana),
-    };
+    return n > 0 ? n : null;
   } catch {
     return null;
   }
@@ -142,14 +115,21 @@ async function fearGreed(): Promise<{ value: number; label: string } | null> {
   }
 }
 
+// ── The tape ──────────────────────────────────────────────────────────────
+
 const TAPE_TTL_MS = 15_000;
 let cached: { at: number; tape: Tape } | null = null;
 let inflight: Promise<Tape> | null = null;
 
-/** Cached and de-duplicated so every visitor's dawn does not fan out to six upstream APIs. */
-export async function loadTape(): Promise<Tape> {
-  if (cached && Date.now() - cached.at < TAPE_TTL_MS) return cached.tape;
-  inflight ??= fetchTapeUncached()
+/**
+ * Cached and de-duplicated so a burst of requests doesn't fan out to every
+ * upstream. `held` are coins villagers still hold, priced even if they've
+ * left the top 20.
+ */
+export async function loadTape(held: string[] = []): Promise<Tape> {
+  const covers = (t: Tape) => held.every((c) => !c || t.assets[c]);
+  if (cached && Date.now() - cached.at < TAPE_TTL_MS && covers(cached.tape)) return cached.tape;
+  inflight ??= fetchTapeUncached(held)
     .then((tape) => {
       cached = { at: Date.now(), tape };
       return tape;
@@ -160,57 +140,50 @@ export async function loadTape(): Promise<Tape> {
   return inflight;
 }
 
-async function fetchTapeUncached(): Promise<Tape> {
-  const [coinbase, cbChange, cbGbp, gecko, binance, fng] = await Promise.all([
-    coinbaseSpot(),
-    coinbaseChange(),
+async function fetchTapeUncached(held: string[]): Promise<Tape> {
+  const [pairs, gecko, fng] = await Promise.all([krakenPairs(), geckoMarkets(), fearGreed()]);
+  const markets = gecko.coins;
+  const coins = pickTopCoins(markets, pairs?.usd ?? null, MARKET_SIZE);
+  const wanted = [...new Set([...coins, ...held.filter(Boolean)])];
+
+  const keys = wanted.map((c) => pairs?.usd.get(c)?.key).filter((k): k is string => Boolean(k));
+  const [ticker, cbGbp] = await Promise.all([
+    krakenTicker(pairs?.gbpKey ? [...keys, pairs.gbpKey] : keys),
     coinbaseGbp(),
-    geckoTape(),
-    binanceTape(),
-    fearGreed(),
   ]);
+  const bySymbol = new Map(markets.map((m) => [m.symbol, m]));
 
-  let btcUsd = 0;
-  let btcGbp = 0;
-  let change24h = 0;
-  let source = "dark";
-
-  if (coinbase) {
-    btcUsd = coinbase;
-    source = "Coinbase";
-    change24h = gecko?.change24h ?? cbChange ?? binance?.change24h ?? 0;
-  } else if (gecko) {
-    btcUsd = gecko.btcUsd;
-    change24h = gecko.change24h;
-    source = "CoinGecko";
-  } else if (binance) {
-    btcUsd = binance.btcUsd;
-    change24h = binance.change24h;
-    source = binance.source;
+  const assets: Tape["assets"] = {};
+  let fromKraken = 0;
+  for (const coin of wanted) {
+    const key = pairs?.usd.get(coin)?.key;
+    const k = key ? ticker.get(key) : undefined;
+    const g = bySymbol.get(coin);
+    if (k) {
+      assets[coin] = { usd: k.usd, change24h: k.change24h, name: g?.name };
+      fromKraken++;
+    } else if (g && gecko.fresh) {
+      assets[coin] = { usd: g.usd, change24h: g.change24h, name: g.name };
+    }
   }
 
-  btcGbp = cbGbp || gecko?.btcGbp || (btcUsd > 0 ? btcUsd / 1.33 : 0);
-
-  const dark = !(btcUsd > 0);
+  const btc = assets.BTC;
+  const dark = !(btc && btc.usd > 0);
+  const krakenGbp = pairs?.gbpKey ? ticker.get(pairs.gbpKey)?.usd : undefined;
+  const btcUsd = dark ? 100_000 : btc.usd;
+  const btcGbp = krakenGbp || cbGbp || btcUsd / 1.33;
   const fg = fng?.value ?? 50;
-  const resolvedBtcUsd = dark ? 100_000 : btcUsd;
-  const resolvedChange24h = dark ? 0 : change24h;
-
-  const assets: Record<Asset, { usd: number; change24h: number }> = {
-    BTC: { usd: resolvedBtcUsd, change24h: resolvedChange24h },
-    ETH: gecko?.eth ?? { usd: 0, change24h: 0 },
-    SOL: gecko?.sol ?? { usd: 0, change24h: 0 },
-  };
 
   return {
-    btcUsd: resolvedBtcUsd,
-    btcGbp: dark ? 74_000 : btcGbp || btcUsd / 1.33,
-    change24h: resolvedChange24h,
+    btcUsd,
+    btcGbp: dark ? 74_000 : btcGbp,
+    change24h: dark ? 0 : btc.change24h,
     fearGreed: fg,
     fearGreedLabel: fng?.label ?? fngLabel(fg),
     dark,
-    source: dark ? "dark" : source,
+    source: dark ? "dark" : fromKraken > 0 ? "Kraken" : "CoinGecko",
     fetchedAt: Date.now(),
-    assets,
+    assets: dark ? { BTC: { usd: 100_000, change24h: 0 } } : assets,
+    coins: dark ? undefined : coins.filter((c) => assets[c]),
   };
 }

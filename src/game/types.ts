@@ -58,9 +58,17 @@ export type Subject = PurseFields & {
   state: AgentState;
   hangT: number;
   bornDay?: number;
-  /** This villager's current trading position, chosen by their linked agent each day. */
+  /** This villager's current trading position, ordered by the King at each review. */
   asset?: Asset;
   side?: Side;
+  /** Share of the purse committed to the position (0.1..1). */
+  size?: number;
+  /** Asset price (USD) the position was last marked at; P&L runs from here. */
+  entryUsd?: number;
+  /** Purse at the start of the current day — the King's tax is on gains above it. */
+  dayStart?: number;
+  /** The King's latest order note to this villager. */
+  advice?: string;
 };
 
 export type King = PurseFields & {
@@ -99,6 +107,10 @@ export type GameState = {
   speech: SpeechLine[];
   /** Today's petitions to the King — resets when the day changes. Absent on older saves. */
   petitions?: { day: number; count: number; summoned: number };
+  /** When the King last reviewed the parish's trades (ms since epoch). */
+  lastReviewAt?: number;
+  /** Recent prices, one sample per review, oldest first — the King reads trends from it. */
+  priceHistory?: { t: number; BTC: number; ETH: number; SOL: number }[];
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset };
 };

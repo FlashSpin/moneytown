@@ -83,20 +83,43 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     return { ...world, loading: false, synced: true, error: null };
   }
   const known = new Set(prev.subjects.map((x) => x.id));
-  const onServer = new Set(world.subjects.map((x) => x.id));
+  const serverById = new Map(world.subjects.map((x) => [x.id, x]));
+  const onServer = new Set(serverById.keys());
+  const reviewed = world.lastReviewAt !== prev.lastReviewAt;
   // Condemned souls already hanged (and removed) here must not walk back in.
   const arrivals = world.subjects.filter(
     (x) => !known.has(x.id) && x.state !== "condemned" && x.state !== "hanging",
   );
-  // Souls banished by royal decree are gone from the server's roll.
-  const kept = prev.subjects.filter((x) => onServer.has(x.id));
+  // Souls banished by royal decree are gone from the server's roll; the
+  // rest take the server's purse and orders but keep walking from where they are.
+  let purseChanged = false;
+  const kept = prev.subjects
+    .filter((x) => onServer.has(x.id))
+    .map((x) => {
+      const srv = serverById.get(x.id)!;
+      if (x.state === "condemned" || x.state === "hanging") return x;
+      if (srv.balance !== x.balance) purseChanged = true;
+      const moved = reviewed && (srv.side !== x.side || srv.asset !== x.asset);
+      return {
+        ...x,
+        balance: srv.balance,
+        lastPnl: srv.lastPnl,
+        side: srv.side,
+        asset: srv.asset,
+        size: srv.size,
+        entryUsd: srv.entryUsd,
+        dayStart: srv.dayStart,
+        advice: srv.advice,
+        ...(moved ? { destX: srv.destX, destY: srv.destY, state: srv.state } : {}),
+      };
+    });
   const logIds = new Set(prev.log.map((e) => e.id));
   const fresh = world.log.filter((e) => !logIds.has(e.id));
   const crownChanged =
     world.king.balance !== prev.king.balance ||
     world.taxRate !== prev.taxRate ||
     world.king.favorAsset !== prev.king.favorAsset;
-  if (!arrivals.length && kept.length === prev.subjects.length && !fresh.length && !crownChanged) {
+  if (!arrivals.length && kept.length === prev.subjects.length && !fresh.length && !crownChanged && !reviewed && !purseChanged) {
     return prev.error ? { error: null } : null;
   }
   if (arrivals.length) playSpawn();
@@ -111,7 +134,16 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     decree: world.decree,
     log: [...fresh, ...prev.log].slice(0, 80),
     petitions: world.petitions,
-    speech: gone.size ? prev.speech.filter((l) => !gone.has(l.fromId) && !(l.toId && gone.has(l.toId))) : prev.speech,
+    lastReviewAt: world.lastReviewAt,
+    priceHistory: world.priceHistory,
+    tape: world.tape,
+    brain: world.brain,
+    // A fresh review brings the King's new talk; otherwise keep what's playing.
+    speech: reviewed
+      ? world.speech
+      : gone.size
+        ? prev.speech.filter((l) => !gone.has(l.fromId) && !(l.toId && gone.has(l.toId)))
+        : prev.speech,
     selectedId: prev.selectedId && gone.has(prev.selectedId) ? null : prev.selectedId,
     error: null,
   };

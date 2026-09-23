@@ -44,6 +44,7 @@ export function makeSubject(rng: () => number, taken: Set<string>, grant: number
     firstName,
     wallet: fakeWallet(rng),
     balance: grant,
+    dayStart: grant,
     lastPnl: 0,
     lastAction: "idle",
     lastFlavor: `${firstName} is staked £${STAKE_GBP}. Linked to an agent — trade well, or the tax hangs you.`,

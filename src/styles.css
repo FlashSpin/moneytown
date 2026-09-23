@@ -654,3 +654,25 @@
   gap: 3px;
   word-break: break-word;
 }
+
+.roll-figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.roll-today {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--color-ink-soft);
+}
+
+.king-order {
+  margin: 4px 0;
+  padding: 6px 9px;
+  font-size: 0.82rem;
+  font-style: italic;
+  border-left: 3px solid var(--color-crimson);
+  background: color-mix(in oklab, var(--color-crimson) 7%, transparent);
+}

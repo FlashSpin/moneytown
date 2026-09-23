@@ -1,42 +1,18 @@
 /**
- * AI counsel for the daily tick — server-only. Everyone (King and every
- * villager) shares one fixed cascade (Gemini, Groq, Claude, Grok,
- * Pollinations — see src/lib/counsel.server.ts), then the
- * caller's own heuristic fallback (this module never invents a decision
- * itself; `counselDawn` returns null on total failure). There is no more
- * per-soul model choice — that was a player-facing control, now removed —
- * and no local-model backends (Ollama/LM Studio/on-device), which only ever
- * made sense from a visitor's own browser, not a server cron.
+ * The King's trading council — server-only. One AI call (Gemini, Groq,
+ * Claude, Grok, Pollinations — see src/lib/counsel.server.ts) sees every
+ * villager's purse, position and P&L plus the markets and their recent
+ * trend, and returns an order for each villager. At dawn it also sets the
+ * day's tax and favoured market. Returns null when no AI answers; the caller
+ * then falls back to the momentum rule in src/game/trading.ts.
  */
 import { askCounsel, type CounselSource } from "@/lib/counsel.server";
-import { RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
+import { HANG_BELOW_GBP, RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
 import { ASSETS, type Asset, type Side } from "./dawn";
 import { trimSpeech } from "./brains";
-import type { BrainInfo, SpeechLine, SubjectAction, Tape } from "./types";
+import { clampSize, trendPct, type Order, type PriceSample } from "./trading";
+import type { BrainInfo, SpeechLine, Tape } from "./types";
 import { clamp, formatGbp, satsToGbp, tapeGbp, uid } from "./wallets";
-
-export type KingCounsel = {
-  say: string;
-  favorAsset: Asset;
-  taxRate: number;
-};
-
-export type SubjectCounsel = {
-  id: string;
-  action: SubjectAction;
-  side: Side;
-  asset: Asset;
-  say: string;
-};
-
-export type DawnCounsel = {
-  king: KingCounsel;
-  subjects: SubjectCounsel[];
-  talks: SpeechLine[];
-  brain: BrainInfo;
-};
-
-const SIDES: Side[] = ["long", "short", "flat"];
 
 export const BRAIN_LABELS: Record<CounselSource, string> = {
   gemini: "Gemini (free)",
@@ -45,6 +21,31 @@ export const BRAIN_LABELS: Record<CounselSource, string> = {
   grok: "Grok (online)",
   pollinations: "Free online wits",
 };
+
+export type CouncilSoul = {
+  id: string;
+  firstName: string;
+  balance: number;
+  /** Purse at the start of the day. */
+  dayStart: number;
+  side?: Side;
+  asset?: Asset;
+  size?: number;
+  /** P&L of the open position since it was last marked (sats). */
+  openPnl: number;
+};
+
+export type Council = {
+  say: string;
+  orders: Map<string, Order>;
+  talks: SpeechLine[];
+  /** Dawn only: next day's tax (fraction) and favoured market. */
+  taxRate?: number;
+  favorAsset?: Asset;
+  brain: BrainInfo;
+};
+
+const SIDES: Side[] = ["long", "short", "flat"];
 
 function extractJson(text: string): unknown {
   const trimmed = text.trim();
@@ -65,74 +66,88 @@ function extractJson(text: string): unknown {
   }
 }
 
-function asSubAction(v: unknown): SubjectAction {
-  if (v === "earn" || v === "work") return "earn";
-  if (v === "walk" || v === "petition") return "walk";
-  return "idle";
+function asSide(v: unknown): Side | null {
+  const s = String(v ?? "").toLowerCase();
+  return SIDES.includes(s as Side) ? (s as Side) : null;
 }
 
-function asSide(v: unknown): Side {
-  return SIDES.includes(v as Side) ? (v as Side) : "flat";
+function asAsset(v: unknown): Asset | null {
+  const s = String(v ?? "").toUpperCase();
+  return (ASSETS as string[]).includes(s) ? (s as Asset) : null;
 }
 
-function asAsset(v: unknown): Asset {
-  return (ASSETS as string[]).includes(v as string) ? (v as Asset) : "BTC";
-}
-
-/** Falls back to the previous day's rate on anything missing/invalid. */
-function asTaxRate(v: unknown, prevRate: number): number {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return prevRate;
-  return clamp(n / 100, TAX_MIN, TAX_MAX);
-}
-
-function gbp(sats: number, tape: Tape): string {
-  return formatGbp(satsToGbp(sats, tapeGbp(tape)));
-}
-
-function marketsLine(tape: Tape): string {
+function marketsBlock(tape: Tape, history: PriceSample[]): string {
   return ASSETS.map((a) => {
     const info = tape.assets[a];
-    const sign = info.change24h >= 0 ? "+" : "";
-    return `${a} $${Math.round(info.usd).toLocaleString("en-US")} ${sign}${info.change24h.toFixed(1)}%`;
-  }).join(" · ");
+    if (!(info.usd > 0)) return `- ${a}: no price today — do not trade it`;
+    const trend = trendPct(history, a, info.usd);
+    const span = history.length ? `${Math.round((Date.now() - history[0]!.t) / 3_600_000)}h` : "";
+    const sign = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+    return `- ${a}: $${Math.round(info.usd).toLocaleString("en-US")}, 24h ${sign(info.change24h)}${
+      trend !== null && span ? `, over the last ${span} ${sign(trend)}` : ""
+    }`;
+  }).join("\n");
 }
 
-type SubjectRow = { id: string; firstName: string; balance: number };
-
-function counselPrompt(input: {
+function councilPrompt(input: {
   day: number;
+  dawn: boolean;
   kingBalance: number;
   taxRate: number;
-  cap: number;
+  favorAsset: Asset;
+  favorFixed: boolean;
+  taxFixed: boolean;
   tape: Tape;
-  role: "king" | "agent";
-  kingFavorAsset?: Asset;
-  subjects: SubjectRow[];
+  history: PriceSample[];
+  souls: CouncilSoul[];
 }): string {
-  const tape = input.tape;
-  const rows = input.subjects.map((s) => `${s.id}|${s.firstName}|purse ${gbp(s.balance, tape)}`).join("\n");
+  const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(input.tape)));
   const tax = Math.round(input.taxRate * 100);
-  const markets = marketsLine(tape);
-  const subjectSchema = `{"id":"...","action":"earn|idle|walk","side":"long|short|flat","asset":"BTC|ETH|SOL","say":"one Tudor sentence"}`;
-  const talkSchema = `{"from":"subject id","to":"subject id or king or null","shout":false,"text":"short Tudor speech"}`;
-  if (input.role === "agent") {
-    return `Day ${input.day}. You are the LINKED AI AGENT thinking for these Ledgerford souls. Each soul trades ONE crypto asset long, short, or flat — this is their real trade, and their whole purse moves with that asset's real price by the next dawn. Choose with care: pick recklessly and they can be wiped out and hang; pick well and they prosper. The King's tax is ${tax}%. Daily upkeep is £${RENT_GBP} from the purse. If they cannot pay the tax they hang. No keys. Amounts in pounds.
-Markets (usd, 24h): ${markets}
-Your King favors ${input.kingFavorAsset ?? "BTC"} today — weigh it, but think for yourself.
-Souls (id|name|purse):
-${rows || "(none)"}
-JSON:
-{"subjects":[${subjectSchema}],"talk":[${talkSchema}]}
-Rules: side/asset is each soul's real trade for the coming dawn — never default to flat without reason. action is flavor only (earn = work, idle/walk = rest). Talk 2-5 lines — let souls discuss which asset looks promising and why, debating strategy with each other. Never ask for keys. JSON only.`;
+  const rows = input.souls
+    .map((s) => {
+      const today = s.balance - s.dayStart;
+      const pos = s.side && s.side !== "flat" ? `${s.side} ${s.asset} at ${Math.round(clampSize(s.size) * 100)}%` : "flat";
+      return `${s.id} | ${s.firstName} | purse ${gbp(s.balance)} | today ${today >= 0 ? "+" : "-"}${gbp(Math.abs(today))} | holding ${pos}${
+        s.side && s.side !== "flat" ? ` (open ${s.openPnl >= 0 ? "+" : "-"}${gbp(Math.abs(s.openPnl))})` : ""
+      }`;
+    })
+    .join("\n");
+  const dawnAsk = input.dawn
+    ? `,"taxRate":${tax},"favorAsset":"BTC|ETH|SOL"`
+    : "";
+  const dawnRules = input.dawn
+    ? `\n- It is dawn: also set taxRate (whole %, ${Math.round(TAX_MIN * 100)}-${Math.round(TAX_MAX * 100)}; it is taken from each villager's daily PROFIT only, so a fair rate fills the treasury without starving them)${
+        input.taxFixed ? " — the tax is fixed by royal decree, repeat it" : ""
+      } and favorAsset (your house view for the day)${input.favorFixed ? ` — fixed by royal decree at ${input.favorAsset}, repeat it` : ""}.`
+    : "";
+
+  return `Day ${input.day}${input.dawn ? ", dawn" : ", a review during the day"}. You are the KING of Ledgerford and master of its trading house. Every villager is a trading agent staked from your treasury. You review the parish every few hours and ORDER each villager's position; they obey.
+
+How the money works:
+- A position is LONG (gains when the asset rises), SHORT (gains when it falls) or FLAT (no risk), on BTC, ETH or SOL.
+- size = share of the purse at risk (10-100). P&L = purse x size x price move. Each review re-marks positions at the current price.
+- Each dawn: your tax takes ${tax}% of the day's PROFIT only (nothing on a losing day), then £${RENT_GBP} upkeep. A purse below £${HANG_BELOW_GBP} hangs.
+
+Your goal: grow the parish's total wealth while keeping every soul alive. Trade like a disciplined master:
+- Follow clear trends; don't fight them. If nothing moves decisively, go FLAT or small — sitting out costs only the upkeep.
+- Cut positions that are losing against the trend; let winners run (keep them unchanged).
+- Size by conviction: 20-40 normally, up to 60 only on a strong, confirmed trend. Weak purses (under £10) no more than 25.
+- Spread the parish across assets when conviction is similar; don't put every soul on one bet.
+- Don't flip positions on noise — every change should have a reason.${
+    input.favorFixed ? `\n- The bearer of the royal seal favours ${input.favorAsset}: lean towards it where the trend allows.` : ""
   }
-  return `Day ${input.day}. You are the KING AI of Ledgerford — in command of the parish's linked agents. The crown treasury opens new souls by a fixed rule in code, not by your choice, and only while the parish is earning. You set the parish's market policy (favor ONE asset today; your linked agents weigh your favor but still think for themselves) AND the tithe rate (0-${Math.round(TAX_MAX * 100)}%, whole percent — set it to keep the treasury healthy without hanging the whole parish). King purse ${gbp(input.kingBalance, tape)}. Daily upkeep £${RENT_GBP}. Cap ${input.cap}.
-Markets (usd, 24h): ${markets}
-Souls (id|name|purse):
+
+Markets:
+${marketsBlock(input.tape, input.history)}
+Fear & greed: ${input.tape.fearGreed} (${input.tape.fearGreedLabel}).${input.tape.dark ? " The price tape is DARK today — order everyone FLAT." : ""}
+
+Treasury: ${gbp(input.kingBalance)}.
+Villagers (id | name | purse | today's P&L | current position):
 ${rows || "(none)"}
-JSON:
-{"king":{"say":"one Tudor sentence — command them to trade wisely","favorAsset":"BTC|ETH|SOL","taxRate":0},"subjects":[${subjectSchema}],"talk":[${talkSchema}]}
-Rules: side/asset is each soul's real trade for the coming dawn. Talk 3-6 lines — let the parish debate which asset looks promising. Never claim to spawn or move money yourself. Never ask for keys. Amounts in pounds. JSON only.`;
+
+Reply with JSON only:
+{"say":"one Tudor sentence to the parish about your plan","orders":[{"id":"...","side":"long|short|flat","asset":"BTC|ETH|SOL","size":30,"note":"one short Tudor sentence to this villager with the reason"}],"talk":[{"from":"villager id or king","to":"villager id, king or null","shout":false,"text":"short Tudor speech about the trades"}]${dawnAsk}}
+Rules: one order per villager id above. 2-5 talk lines. Never ask for keys. Amounts in pounds.${dawnRules}`;
 }
 
 function parseTalks(raw: unknown, ids: Set<string>, rng: () => number): SpeechLine[] {
@@ -166,68 +181,51 @@ function parseTalks(raw: unknown, ids: Set<string>, rng: () => number): SpeechLi
   return out;
 }
 
-function parseCounsel(
-  raw: unknown,
-  ids: string[],
-  prevTaxRate: number,
-  rng: () => number,
-): { king: KingCounsel; subjects: SubjectCounsel[]; talks: SpeechLine[] } {
-  const obj = (raw && typeof raw === "object" ? raw : {}) as {
-    king?: { say?: unknown; favorAsset?: unknown; taxRate?: unknown };
-    subjects?: { id?: unknown; action?: unknown; side?: unknown; asset?: unknown; say?: unknown }[];
-    talk?: unknown;
-    talks?: unknown;
-  };
-  const king: KingCounsel = {
-    say: String(obj.king?.say ?? "The King holds his peace. His treasury opens souls by rule."),
-    favorAsset: asAsset(obj.king?.favorAsset),
-    taxRate: asTaxRate(obj.king?.taxRate, prevTaxRate),
-  };
-  const byId = new Map((obj.subjects ?? []).map((s) => [String(s.id), s]));
-  const subjects: SubjectCounsel[] = ids.map((id) => {
-    const row = byId.get(id);
-    return {
-      id,
-      action: asSubAction(row?.action),
-      side: asSide(row?.side),
-      asset: asAsset(row?.asset),
-      say: String(row?.say ?? ""),
-    };
-  });
-  const talks = parseTalks(obj.talk ?? obj.talks, new Set(ids), rng);
-  return { king, subjects, talks };
-}
-
-/** Grok, then free Pollinations. Both are plain server-to-server HTTPS calls. */
-async function decide(prompt: string): Promise<{ text: string; brain: BrainInfo }> {
-  const res = await askCounsel(prompt);
-  if (res.ok && res.text.trim()) {
-    const brain: BrainInfo = { kind: res.source, label: BRAIN_LABELS[res.source] };
-    return { text: res.text, brain };
+/** Validate the AI's orders: known ids only, known sides and assets, sizes clamped, no trading an unpriced asset. */
+function parseOrders(raw: unknown, ids: Set<string>, tape: Tape): Map<string, Order> {
+  const orders = new Map<string, Order>();
+  if (!Array.isArray(raw)) return orders;
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as { id?: unknown; side?: unknown; asset?: unknown; size?: unknown; note?: unknown };
+    const id = String(r.id ?? "");
+    if (!ids.has(id) || orders.has(id)) continue;
+    const side = asSide(r.side);
+    if (!side) continue;
+    const asset = asAsset(r.asset) ?? "BTC";
+    const priced = tape.assets[asset].usd > 0 && !tape.dark;
+    orders.set(id, {
+      side: priced ? side : "flat",
+      asset,
+      size: clampSize(r.size),
+      note: String(r.note ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
+    });
   }
-  throw new Error(res.ok ? "empty reply" : res.error);
+  return orders;
 }
 
-export async function counselDawn(input: {
-  day: number;
-  kingBalance: number;
-  taxRate: number;
-  cap: number;
-  tape: Tape;
-  role: "king" | "agent";
-  kingFavorAsset?: Asset;
-  subjects: SubjectRow[];
-}): Promise<DawnCounsel | null> {
+export async function kingCouncil(input: Parameters<typeof councilPrompt>[0]): Promise<Council | null> {
   try {
-    const prompt = counselPrompt(input);
-    const { text, brain } = await decide(prompt);
-    const parsed = parseCounsel(
-      extractJson(text),
-      input.subjects.map((s) => s.id),
-      input.taxRate,
-      Math.random,
-    );
-    return { ...parsed, brain };
+    const res = await askCounsel(councilPrompt(input));
+    if (!res.ok || !res.text.trim()) return null;
+    const obj = extractJson(res.text) as {
+      say?: unknown;
+      orders?: unknown;
+      talk?: unknown;
+      talks?: unknown;
+      taxRate?: unknown;
+      favorAsset?: unknown;
+    };
+    const ids = new Set(input.souls.map((s) => s.id));
+    const taxN = Number(obj.taxRate);
+    return {
+      say: String(obj.say ?? "").replace(/\s+/g, " ").trim().slice(0, 240),
+      orders: parseOrders(obj.orders, ids, input.tape),
+      talks: parseTalks(obj.talk ?? obj.talks, ids, Math.random),
+      taxRate: input.dawn && Number.isFinite(taxN) ? clamp(taxN > 1 ? taxN / 100 : taxN, TAX_MIN, TAX_MAX) : undefined,
+      favorAsset: input.dawn ? (asAsset(obj.favorAsset) ?? undefined) : undefined,
+      brain: { kind: res.source, label: BRAIN_LABELS[res.source] },
+    };
   } catch {
     return null;
   }

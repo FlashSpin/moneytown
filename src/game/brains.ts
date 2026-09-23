@@ -1,6 +1,6 @@
 import { SHOUT_LIFE, SPEECH_LIFE } from "./constants";
-import type { Asset, Side } from "./dawn";
-import type { SpeechLine, SubjectAction, Tape } from "./types";
+import type { Asset } from "./dawn";
+import type { SpeechLine } from "./types";
 import { pick, uid } from "./wallets";
 
 const SQUARE_MUTTER = [
@@ -42,24 +42,6 @@ const KING_ASIDES = [
 ];
 
 const ASSET_NOUN: Record<Asset, string> = { BTC: "Bitcoin", ETH: "Ether", SOL: "Solana" };
-
-export function subjectFlavor(
-  name: string,
-  action: SubjectAction,
-  side: Side,
-  asset: Asset,
-  income: number,
-  _tape: Tape,
-): string {
-  if (side !== "flat") {
-    const verb = side === "long" ? "backs" : "bets against";
-    const mood = income > 0 ? "and prospers by it" : income < 0 ? "and takes a loss" : "and holds steady";
-    return `${name} ${verb} ${ASSET_NOUN[asset]} ${mood}.`;
-  }
-  if (action === "idle") return `${name} idles, purse sitting flat on no position.`;
-  if (action === "walk") return `${name} walks the parish, weighing the markets.`;
-  return `${name} watches the tape, purse untouched today.`;
-}
 
 export function kingFlavor(favorAsset: Asset): string {
   return `The King commands the parish and favours ${ASSET_NOUN[favorAsset]} this day. His treasury opens new souls only while they trade well.`;

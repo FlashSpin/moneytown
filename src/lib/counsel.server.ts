@@ -107,7 +107,7 @@ async function tryGemini(prompt: string): Promise<string | null> {
       if (!res.ok) {
         // 429 = the free daily/minute quota is spent; 404 = model unknown → try the next one.
         lastResult.set("gemini", `${model}: ${await describeFailure(res)}`);
-        console.warn(`[counsel] Gemini ${model} ${lastResult.get("gemini")} — falling back.`);
+        console.warn(`[counsel] Gemini ${lastResult.get("gemini")} — falling back.`);
         if (res.status === 404 && !override) continue;
         return null;
       }
@@ -166,7 +166,7 @@ async function tryGroq(prompt: string): Promise<string | null> {
       });
       if (!res.ok) {
         lastResult.set("groq", `${model}: ${await describeFailure(res)}`);
-        console.warn(`[counsel] Groq ${model} ${lastResult.get("groq")} — falling back.`);
+        console.warn(`[counsel] Groq ${lastResult.get("groq")} — falling back.`);
         if (res.status === 404 && !override) continue;
         return null;
       }

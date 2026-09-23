@@ -1,5 +1,5 @@
 import { Crown, ScrollText } from "lucide-react";
-import { LIVING_CAP, RENT_GBP } from "./constants";
+import { HANG_BELOW_GBP, LIVING_CAP, RENT_GBP } from "./constants";
 import { KingAudience } from "./KingAudience";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
@@ -16,6 +16,10 @@ type WalletTarget = {
   side?: Side;
   asset?: Asset;
   lastPnl?: number;
+  size?: number;
+  /** Purse gain or loss since dawn (sats). */
+  today?: number;
+  advice?: string;
   favorAsset?: Asset;
 };
 
@@ -23,20 +27,37 @@ function PositionLine({ target, tape }: { target: WalletTarget; tape: Tape }) {
   if (target.king) {
     return (
       <p className="hint">
-        Favors {target.favorAsset ?? "BTC"} in the markets today — his linked agents weigh it, but
-        think for themselves.
+        Favours {target.favorAsset ?? "BTC"} today. He reviews every villager&apos;s trades every few
+        hours and gives each one orders.
       </p>
     );
   }
+  const today = target.today ?? 0;
+  const todayLine = (
+    <span className={today >= 0 ? "tape-up" : "tape-down"}>
+      {" "}
+      · today {today >= 0 ? "+" : "-"}
+      {formatPurse(Math.abs(today), tape)}
+    </span>
+  );
   if (!target.side || target.side === "flat") {
-    return <p className="hint">Resting — no position.</p>;
+    return <p className="hint">Flat — no position, no risk.{todayLine}</p>;
   }
-  const pnl = target.lastPnl ?? 0;
   return (
-    <p className={pnl >= 0 ? "tape-up" : "tape-down"}>
-      {target.side.toUpperCase()} {target.asset ?? "BTC"} · last dawn {pnl >= 0 ? "+" : ""}
-      {formatPurse(pnl, tape)}
+    <p>
+      {target.side.toUpperCase()} {target.asset ?? "BTC"} with {Math.round((target.size ?? 0.4) * 100)}% of the purse
+      {todayLine}
     </p>
+  );
+}
+
+function TodayTag({ today, tape }: { today: number; tape: Tape }) {
+  if (!today) return <span className="roll-today">±£0 today</span>;
+  return (
+    <span className={today > 0 ? "roll-today roll-up" : "roll-today roll-down"}>
+      {today > 0 ? "+" : "-"}
+      {formatPurse(Math.abs(today), tape)} today
+    </span>
   );
 }
 
@@ -56,10 +77,11 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
       </p>
       <p className="stat-num">{formatPurse(target.balance, tape)}</p>
       <PositionLine target={target} tape={tape} />
+      {!target.king && target.advice ? <p className="king-order">The King&apos;s orders: “{target.advice}”</p> : null}
       <p className="hint">
         {target.king
-          ? "Commands the parish and sets its market policy — favoured asset and tithe — each day."
-          : "Trades for this wallet each day — the purse moves with the real market, or the King's tax hangs it."}
+          ? "Sets the tax on profits and the favoured market each dawn, and orders every villager's trades."
+          : `Trades on the King's orders at real prices. Below £${HANG_BELOW_GBP} it hangs.`}
       </p>
       <p className="wallet-addr">{target.wallet}</p>
       <p className="hint">Placeholder address — no key behind it, never real bitcoin.</p>
@@ -116,12 +138,12 @@ export function Ledger() {
       <p className="hint">Sum of every purse, in pounds. Click a name to inspect.</p>
       <p className="hint">
         Each soul trades real, live crypto prices (BTC/ETH/SOL) — paper only, no real money. The
-        King sets the day's tax and favoured market; villagers trade or hang once a day, on their
-        own, with no player controlling them.
+        King&apos;s AI reviews every trade every few hours and orders each villager long, short or
+        flat; at dawn he taxes the day&apos;s profits.
       </p>
 
       <section className="tithe-row">
-        <p className="section-label">King's tax — {taxByDecree ? "by royal decree" : "set by the crown"}</p>
+        <p className="section-label">King's tax on profits — {taxByDecree ? "by royal decree" : "set by the crown"}</p>
         <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
       </section>
 
@@ -140,22 +162,26 @@ export function Ledger() {
                 <button type="button" className="roll-hit" onClick={() => select(sub.id)}>
                   <span className="roll-name">
                     <span>{sub.firstName}</span>
-                    {sub.side && sub.side !== "flat" ? (
-                      <span
-                        className={(sub.lastPnl ?? 0) >= 0 ? "roll-position roll-up" : "roll-position roll-down"}
-                      >
-                        {sub.side.toUpperCase()} {sub.asset ?? "BTC"}
-                      </span>
-                    ) : null}
+                    <span className="roll-position">
+                      {sub.side && sub.side !== "flat"
+                        ? `${sub.side.toUpperCase()} ${sub.asset ?? "BTC"} · ${Math.round((sub.size ?? 0.4) * 100)}%`
+                        : "FLAT"}
+                    </span>
                   </span>
-                  <span className="roll-money">{formatPurse(sub.balance, tape)}</span>
+                  <span className="roll-figures">
+                    <span className="roll-money">{formatPurse(sub.balance, tape)}</span>
+                    <TodayTag today={sub.balance - (sub.dayStart ?? sub.balance)} tape={tape} />
+                  </span>
                 </button>
               </li>
             ))}
           </ul>
         )}
       </section>
-      <p className="hint transfer">Stake £20 to start. Upkeep £{RENT_GBP.toFixed(2)} plus the tax each day.</p>
+      <p className="hint transfer">
+        Stake £20 to start. Upkeep £{RENT_GBP.toFixed(2)} a day; the King&apos;s tax is on profits only.
+        Below £{HANG_BELOW_GBP}, the gallows.
+      </p>
 
       {selected ? (
         <WalletInspect
@@ -170,6 +196,9 @@ export function Ledger() {
             side: selected.side,
             asset: selected.asset,
             lastPnl: selected.lastPnl,
+            size: selected.size,
+            today: selected.balance - (selected.dayStart ?? selected.balance),
+            advice: selected.advice,
           }}
         />
       ) : selectedId === "king" ? (

@@ -67,8 +67,16 @@ export type Subject = PurseFields & {
   entryUsd?: number;
   /** Purse at the start of the current day — the King's tax is on gains above it. */
   dayStart?: number;
-  /** The King's latest order note to this villager. */
+  /** The King's latest advice to this villager. */
   advice?: string;
+  /** How this villager trades — its own temperament, fixed at birth. */
+  temper?: import("./trading.ts").Temper;
+  /** This villager's own reasoning for its current trade, in its words. */
+  plan?: string;
+  /** Whether its current trade follows the King's advice. */
+  followsKing?: boolean;
+  /** Track record across every marked trade. */
+  record?: { wins: number; losses: number; pnl: number };
 };
 
 export type King = PurseFields & {
@@ -107,6 +115,8 @@ export type GameState = {
   speech: SpeechLine[];
   /** Today's petitions to the King — resets when the day changes. Absent on older saves. */
   petitions?: { day: number; count: number; summoned: number };
+  /** The latest parish council: the King's plan and the villagers' strategy debate. */
+  council?: { at: number; day: number; kingPlan: string; lines: { fromId: string; toId: string | null; text: string }[] };
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
   /** Recent prices, one sample per review, oldest first — the King reads trends from it. */

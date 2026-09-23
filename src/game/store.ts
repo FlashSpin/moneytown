@@ -110,6 +110,10 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
         entryUsd: srv.entryUsd,
         dayStart: srv.dayStart,
         advice: srv.advice,
+        temper: srv.temper,
+        plan: srv.plan,
+        followsKing: srv.followsKing,
+        record: srv.record,
         ...(moved ? { destX: srv.destX, destY: srv.destY, state: srv.state } : {}),
       };
     });
@@ -135,6 +139,7 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     log: [...fresh, ...prev.log].slice(0, 80),
     petitions: world.petitions,
     lastReviewAt: world.lastReviewAt,
+    council: world.council,
     priceHistory: world.priceHistory,
     tape: world.tape,
     brain: world.brain,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { capSizeForPurse, clampSize, markToMarket, momentumOrder, settleDay } from "./trading.ts";
+import { capSizeForPurse, clampSize, markToMarket, momentumOrder, recordTrade, settleDay, temperDecide, temperOf } from "./trading.ts";
 
 describe("marking a position to market", () => {
   it("longs gain on a rise, shorts on a fall, on the share at risk only", () => {
@@ -92,5 +92,50 @@ describe("the King's fallback strategy", () => {
       SOL: { usd: 150, change24h: 0.9 },
     };
     assert.equal(momentumOrder(calm, []).side, "flat");
+  });
+});
+
+describe("villagers trade in their own way", () => {
+  const call = { side: "long" as const, asset: "ETH" as const, size: 0.4, note: "Ride Ether." };
+
+  it("gives every old villager a stable temperament", () => {
+    assert.equal(temperOf("s-abc"), temperOf("s-abc"));
+    assert.ok(["trend", "contrarian", "cautious", "bold", "steady"].includes(temperOf("s-xyz")));
+  });
+
+  it("trend-followers take the advice as given", () => {
+    const d = temperDecide("trend", call, {});
+    assert.equal(d.side, "long");
+    assert.equal(d.size, 0.4);
+    assert.equal(d.followsKing, true);
+  });
+
+  it("contrarians fade a strong call, lightly", () => {
+    const d = temperDecide("contrarian", call, {});
+    assert.equal(d.side, "short");
+    assert.equal(d.size, 0.2);
+    assert.equal(d.followsKing, false);
+  });
+
+  it("the cautious halve the stake; the bold raise it, up to 60%", () => {
+    assert.equal(temperDecide("cautious", call, {}).size, 0.2);
+    assert.equal(temperDecide("bold", call, {}).size, 0.6);
+  });
+
+  it("the steady hold an open position unless told to reverse it", () => {
+    const holding = { side: "short" as const, asset: "BTC" as const, size: 0.3 };
+    assert.deepEqual(
+      { side: temperDecide("steady", call, holding).side, asset: temperDecide("steady", call, holding).asset },
+      { side: "short", asset: "BTC" },
+    );
+    const reverse = { side: "long" as const, asset: "BTC" as const, size: 0.3, note: "" };
+    assert.equal(temperDecide("steady", reverse, holding).side, "long");
+  });
+
+  it("keeps a track record of wins, losses and total P&L", () => {
+    let r = recordTrade(undefined, 500);
+    r = recordTrade(r, -200);
+    r = recordTrade(r, 0);
+    assert.deepEqual(r, { wins: 1, losses: 1, pnl: 300 });
   });
 });

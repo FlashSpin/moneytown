@@ -86,3 +86,86 @@ export function momentumOrder(
     note: `${best.asset} ${best.pct > 0 ? "climbs" : "falls"} ${Math.abs(best.pct).toFixed(1)}% — ride it ${side}, but modestly.`,
   };
 }
+
+// ── Temperaments: each villager trades in its own way ───────────────────────
+
+export type Temper = "trend" | "contrarian" | "cautious" | "bold" | "steady";
+export const TEMPERS: Temper[] = ["trend", "contrarian", "cautious", "bold", "steady"];
+
+export const TEMPER_DESCRIPTIONS: Record<Temper, string> = {
+  trend: "a trend-follower who rides whatever is moving",
+  contrarian: "a contrarian who bets against moves that look overdone",
+  cautious: "a cautious trader who risks little and sits out doubtful markets",
+  bold: "a bold trader who backs strong convictions with bigger stakes",
+  steady: "a steady trader who holds positions and dislikes needless changes",
+};
+
+/** A stable temperament for villagers born before temperaments existed. */
+export function temperOf(id: string): Temper {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TEMPERS[h % TEMPERS.length]!;
+}
+
+/**
+ * How a villager acts on advice when no AI speaks for it: the advice (the
+ * King's, or the momentum rule's) filtered through its own temperament.
+ */
+export function temperDecide(
+  temper: Temper,
+  advice: Order,
+  current: { side?: Side; asset?: Asset; size?: number },
+): Order & { followsKing: boolean } {
+  switch (temper) {
+    case "contrarian":
+      // Takes the other side of a strong call, but small.
+      if (advice.side !== "flat" && advice.size >= 0.3) {
+        return {
+          side: advice.side === "long" ? "short" : "long",
+          asset: advice.asset,
+          size: SIZE_MIN * 2,
+          note: `Everyone crowds this ${advice.asset} trade; I'll take the other side, lightly.`,
+          followsKing: false,
+        };
+      }
+      return { ...advice, followsKing: true };
+    case "cautious":
+      return {
+        ...advice,
+        size: Math.max(SIZE_MIN, Math.round((advice.size / 2) * 100) / 100),
+        note: advice.side === "flat" ? advice.note : `I'll follow, but with half the stake.`,
+        followsKing: true,
+      };
+    case "bold":
+      return {
+        ...advice,
+        size: Math.min(0.6, Math.round(advice.size * 1.5 * 100) / 100),
+        note: advice.side === "flat" ? advice.note : `A fine call — I'll back it harder.`,
+        followsKing: true,
+      };
+    case "steady":
+      // Keeps an open position unless the advice says to reverse it.
+      if (current.side && current.side !== "flat" && current.asset && !(advice.asset === current.asset && advice.side !== current.side && advice.side !== "flat")) {
+        return {
+          side: current.side,
+          asset: current.asset,
+          size: current.size ?? SIZE_DEFAULT,
+          note: "I hold my course; no reason to change it yet.",
+          followsKing: advice.side === current.side && advice.asset === current.asset,
+        };
+      }
+      return { ...advice, followsKing: true };
+    case "trend":
+    default:
+      return { ...advice, followsKing: true };
+  }
+}
+
+export function recordTrade(
+  record: { wins: number; losses: number; pnl: number } | undefined,
+  pnl: number,
+): { wins: number; losses: number; pnl: number } {
+  const r = record ?? { wins: 0, losses: 0, pnl: 0 };
+  if (!pnl) return r;
+  return { wins: r.wins + (pnl > 0 ? 1 : 0), losses: r.losses + (pnl < 0 ? 1 : 0), pnl: r.pnl + pnl };
+}

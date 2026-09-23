@@ -101,9 +101,9 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   // The King's council for the new day.
   const history = appendHistory(prev.priceHistory, tape, now);
   const opening: GameState = { ...prev, day, tape, king: { ...prev.king, balance: kingBalance } };
-  const review = await councilAndOrders(opening, settled, tape, { dawn: true, rng, history });
+  const review = await councilAndOrders(opening, settled, tape, { dawn: true, rng, history, now });
   const council = review.council;
-  const brain = council?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" };
+  const brain = review.parish?.brain ?? council?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" };
 
   // A standing royal decree (from the seal-bearer's petition) outranks the King's AI.
   const taxRate = prev.decree?.taxRate ?? council?.taxRate ?? prev.taxRate;
@@ -133,6 +133,7 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     seed: prev.seed + 17,
     brain,
     speech: review.speech,
+    council: review.record,
     lastReviewAt: now,
     priceHistory: history,
   });
@@ -148,7 +149,7 @@ export async function runReview(prev: GameState): Promise<GameState> {
   const rng = mulberry32(prev.seed + Math.floor(now / 60_000));
   const history = appendHistory(prev.priceHistory, tape, now);
   const marked = markParish(prev.subjects, tape);
-  const review = await councilAndOrders({ ...prev, tape }, marked, tape, { dawn: false, rng, history });
+  const review = await councilAndOrders({ ...prev, tape }, marked, tape, { dawn: false, rng, history, now });
 
   let log = prev.log;
   const push = (kind: Parameters<typeof pushLog>[1], text: string) => {
@@ -163,8 +164,9 @@ export async function runReview(prev: GameState): Promise<GameState> {
     tape,
     subjects: review.subjects,
     log,
-    brain: review.council?.brain ?? prev.brain,
+    brain: review.parish?.brain ?? review.council?.brain ?? prev.brain,
     speech: review.speech,
+    council: review.record,
     lastReviewAt: now,
     priceHistory: history,
   });

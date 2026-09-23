@@ -3,6 +3,8 @@ import { HANG_BELOW_GBP, LIVING_CAP, RENT_GBP } from "./constants";
 import { KingAudience } from "./KingAudience";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
+import { CouncilPanel } from "./CouncilPanel";
+import { TEMPER_DESCRIPTIONS, temperOf, type Temper } from "./trading";
 import type { Tape } from "./types";
 import { formatPurse } from "./wallets";
 
@@ -20,6 +22,10 @@ type WalletTarget = {
   /** Purse gain or loss since dawn (sats). */
   today?: number;
   advice?: string;
+  plan?: string;
+  temper?: Temper;
+  followsKing?: boolean;
+  record?: { wins: number; losses: number; pnl: number };
   favorAsset?: Asset;
 };
 
@@ -27,8 +33,8 @@ function PositionLine({ target, tape }: { target: WalletTarget; tape: Tape }) {
   if (target.king) {
     return (
       <p className="hint">
-        Favours {target.favorAsset ?? "BTC"} today. He reviews every villager&apos;s trades every few
-        hours and gives each one orders.
+        Favours {target.favorAsset ?? "BTC"} today. Every few hours he advises each villager, then
+        joins their council.
       </p>
     );
   }
@@ -77,11 +83,27 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
       </p>
       <p className="stat-num">{formatPurse(target.balance, tape)}</p>
       <PositionLine target={target} tape={tape} />
-      {!target.king && target.advice ? <p className="king-order">The King&apos;s orders: “{target.advice}”</p> : null}
+      {!target.king ? (
+        <p className="hint">
+          {target.title} is {TEMPER_DESCRIPTIONS[target.temper ?? temperOf(target.id)]}.
+          {target.record && target.record.wins + target.record.losses > 0
+            ? ` Record: ${target.record.wins} wins, ${target.record.losses} losses, ${target.record.pnl >= 0 ? "+" : "-"}${formatPurse(
+                Math.abs(target.record.pnl),
+                tape,
+              )} in all.`
+            : ""}
+        </p>
+      ) : null}
+      {!target.king && target.plan ? (
+        <p className="own-plan">
+          {target.title}&apos;s plan{target.followsKing === false ? " (going their own way)" : ""}: “{target.plan}”
+        </p>
+      ) : null}
+      {!target.king && target.advice ? <p className="king-order">The King advised: “{target.advice}”</p> : null}
       <p className="hint">
         {target.king
           ? "Sets the tax on profits and the favoured market each dawn, and orders every villager's trades."
-          : `Trades on the King's orders at real prices. Below £${HANG_BELOW_GBP} it hangs.`}
+          : `Decides its own trades at real prices, after hearing the King and debating at the parish council. Below £${HANG_BELOW_GBP} it hangs.`}
       </p>
       <p className="wallet-addr">{target.wallet}</p>
       <p className="hint">Placeholder address — no key behind it, never real bitcoin.</p>
@@ -138,8 +160,8 @@ export function Ledger() {
       <p className="hint">Sum of every purse, in pounds. Click a name to inspect.</p>
       <p className="hint">
         Each soul trades real, live crypto prices (BTC/ETH/SOL) — paper only, no real money. The
-        King&apos;s AI reviews every trade every few hours and orders each villager long, short or
-        flat; at dawn he taxes the day&apos;s profits.
+        King advises every few hours; the villagers debate strategy at their council and each decides
+        its own trade. At dawn he taxes the day&apos;s profits.
       </p>
 
       <section className="tithe-row">
@@ -199,6 +221,10 @@ export function Ledger() {
             size: selected.size,
             today: selected.balance - (selected.dayStart ?? selected.balance),
             advice: selected.advice,
+            plan: selected.plan,
+            temper: selected.temper,
+            followsKing: selected.followsKing,
+            record: selected.record,
           }}
         />
       ) : selectedId === "king" ? (
@@ -209,6 +235,8 @@ export function Ledger() {
           <p className="hint">Click a name to inspect its wallet and position.</p>
         </section>
       )}
+
+      <CouncilPanel />
 
       <section className="log">
         <p className="section-label">

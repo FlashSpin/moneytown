@@ -162,6 +162,7 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     trades: world.trades,
     desk: world.desk,
     halt: world.halt,
+    feed: world.feed,
     risk: world.risk,
     ledger: world.ledger,
     council: world.council,

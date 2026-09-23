@@ -11,8 +11,8 @@ const record = (approach: "momentum" | "own", w: number, l: number, coin = "SOL"
 };
 
 describe("sizing and edge", () => {
-  it("break-even includes both fees", () => {
-    assert.ok(Math.abs(breakEven(2, 1) - 0.6) < 1e-9);
+  it("break-even includes both fees, the spread and slippage", () => {
+    assert.ok(Math.abs(breakEven(2, 1) - 0.65) < 1e-9);
   });
 
   it("Kelly is positive only with an edge", () => {
@@ -29,7 +29,7 @@ describe("sizing and edge", () => {
 
   it("sizes the stake so the stop loses exactly the risk", () => {
     const stake = stakeForRisk(100_000, 0.02, 1.2);
-    assert.ok(Math.abs(stake * 0.02 - 2_000) < 1);
+    assert.ok(Math.abs(stake * 0.0215 - 2_000) < 1);
   });
 
   it("sizes strategy trades from the villager's record once it has one", () => {
@@ -45,7 +45,7 @@ describe("sizing and edge", () => {
   });
 
   it("needs an 8-point edge over break-even", () => {
-    assert.equal(edgeOf(0.67, 2, 1).ok, false);
-    assert.equal(edgeOf(0.69, 2, 1).ok, true);
+    assert.equal(edgeOf(0.72, 2, 1).ok, false);
+    assert.equal(edgeOf(0.74, 2, 1).ok, true);
   });
 });

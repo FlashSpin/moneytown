@@ -242,20 +242,20 @@ describe("a villager's own calls at the desk", () => {
   });
 
   it("turns down a call without a clear edge, and one that gives no odds", () => {
-    // TP 2 / SL 1 breaks even at (1 + 0.8) / 3 = 60%: 65% is only 5 points better.
-    const thin = deskStep(base, { action: "buy", coin: "SOL", chance: 0.65, why: "maybe" }, priceOf, 0, 20_000);
+    // TP 2 / SL 1 breaks even at (1 + 0.95) / 3 = 65% after fees, spread and slippage: 70% is only 5 points better.
+    const thin = deskStep(base, { action: "buy", coin: "SOL", chance: 0.7, why: "maybe" }, priceOf, 0, 20_000);
     assert.equal(thin.events.length, 0);
     assert.match(thin.skipped!, /edge too thin/);
     assert.equal(deskStep(base, { action: "buy", coin: "SOL", why: "trust me" }, priceOf, 0, 20_000).skipped, "gave no odds");
-    const ok = deskStep(base, { action: "buy", coin: "SOL", chance: 0.7, why: "clear setup" }, priceOf, 0, 20_000);
+    const ok = deskStep(base, { action: "buy", coin: "SOL", chance: 0.75, why: "clear setup" }, priceOf, 0, 20_000);
     assert.equal(ok.events.length, 1);
-    assert.match(ok.events[0]!.reason, /70% chance, \+10 pts edge/);
+    assert.match(ok.events[0]!.reason, /75% chance, \+10 pts edge/);
   });
 
   it("never risks more than 6% of the purse at the stop", () => {
     const { events, trader } = deskStep(base, { action: "buy", coin: "SOL", chance: 0.95, tp: 10, sl: 8, why: "sure thing" }, priceOf, 0, 20_000);
     assert.equal(events[0]!.risk, 0.06);
-    assert.equal(trader.position?.stake, Math.floor((100_000 * 0.06) / 0.088));
+    assert.equal(trader.position?.stake, Math.floor((100_000 * 0.06) / 0.0895));
   });
 
   it("marks down an over-confident villager by how its calls actually went", () => {

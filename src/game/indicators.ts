@@ -59,7 +59,45 @@ export type Ticks = {
   px: Record<string, number[]>;
   /** When each coin last had a real price (a missing price repeats the last one in `px`). */
   seen?: Record<string, number>;
+  /** A price that jumped too far to trust yet, per coin — accepted if the next tick confirms it. */
+  suspect?: Record<string, number>;
 };
+
+/** A move bigger than this between two ticks is held back until the next tick confirms it. */
+export const MAX_JUMP = 0.25;
+
+/**
+ * Check a tick's prices before they are recorded: a price that jumped more
+ * than MAX_JUMP from the coin's last sample is held back (recorded as
+ * missing) unless the previous tick saw the same new level, so one bad print
+ * can't trigger trades. Returns the prices to record, the coins held back,
+ * and what to remember as suspect.
+ */
+export function validatePrices(
+  ticks: Ticks | undefined,
+  prices: Record<string, number>,
+): { accepted: Record<string, number>; held: string[]; suspect: Record<string, number> } {
+  const accepted: Record<string, number> = {};
+  const held: string[] = [];
+  const suspect: Record<string, number> = {};
+  for (const [coin, p] of Object.entries(prices)) {
+    if (!(p > 0) || !Number.isFinite(p)) continue;
+    const series = ticks?.px[coin];
+    const last = series?.[series.length - 1];
+    if (!last || Math.abs(p / last - 1) <= MAX_JUMP) {
+      accepted[coin] = p;
+      continue;
+    }
+    const before = ticks?.suspect?.[coin];
+    if (before && Math.abs(p / before - 1) <= 0.05) {
+      accepted[coin] = p; // two ticks agree: it's a real move
+      continue;
+    }
+    held.push(coin);
+    suspect[coin] = p;
+  }
+  return { accepted, held, suspect };
+}
 
 /** Samples further apart than this are a gap (the ticks stopped), not one step. */
 export const MAX_GAP_MS = 12 * 60_000;

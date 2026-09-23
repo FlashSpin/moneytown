@@ -9,6 +9,25 @@ export type BrainKind = "gemini" | "groq" | "claude" | "grok" | "pollinations" |
 
 export type BrainInfo = { kind: BrainKind; label: string };
 
+/**
+ * One coin on the tape: the last price and 24h change, and — from the
+ * exchange, when it gave them — the best bid and ask, 24h volume, and the
+ * pair's order rules (minimum size and cost, quantity precision).
+ */
+export type AssetQuote = {
+  usd: number;
+  change24h: number;
+  name?: string;
+  bid?: number;
+  ask?: number;
+  vol24hUsd?: number;
+  ordermin?: number;
+  costmin?: number;
+  lotDecimals?: number;
+  /** Where the price came from. */
+  src?: "kraken" | "coingecko";
+};
+
 /** Silent FX for showing Bitcoin wallets in £ — never shown as a game tape. */
 export type Tape = {
   btcUsd: number;
@@ -20,7 +39,7 @@ export type Tape = {
   source: string;
   fetchedAt: number;
   /** Live price + 24h change per coin (BTC mirrors the fields above); `name` is the coin's full name. */
-  assets: Record<Asset, { usd: number; change24h: number; name?: string }>;
+  assets: Record<Asset, AssetQuote>;
   /** The market's tradable coins in market-cap rank order (the parish's 20 shops). */
   coins?: Asset[];
   /** The wider list the villagers scan for trades (the top 50 on the exchange), in rank order. */
@@ -154,6 +173,8 @@ export type GameState = {
   ledger?: { since: number; check?: import("./ledger.ts").Reconciliation };
   /** Trading halted: no new trades open (open ones are still managed). Set by the seal-bearer or a failed ledger check. */
   halt?: { at: number; reason: string; by: "seal" | "ledger" };
+  /** Market data health at the latest trading tick. */
+  feed?: { at: number; source: string; listed: number; priced: number; kraken: number; withBook: number; stale: string[]; held: string[] };
   /** The latest trading tick's risk checks: trades blocked, by reason. */
   risk?: { at: number; blocked: Record<string, number>; pausedToday?: { day: number; reason: string } };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */

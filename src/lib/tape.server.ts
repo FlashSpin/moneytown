@@ -15,6 +15,7 @@ import {
   krakenGbpKey,
   parseGeckoMarkets,
   parseGeckoTrending,
+  type Quote,
   parseKrakenPairs,
   parseKrakenTicker,
   pickTopCoins,
@@ -61,7 +62,7 @@ async function krakenPairs(): Promise<{ usd: Map<string, KrakenPair>; gbpKey: st
   }
 }
 
-async function krakenTicker(keys: string[]): Promise<Map<string, { usd: number; change24h: number }>> {
+async function krakenTicker(keys: string[]): Promise<Map<string, Quote>> {
   if (!keys.length) return new Map();
   try {
     return parseKrakenTicker(await fetchJson(`https://api.kraken.com/0/public/Ticker?pair=${keys.join(",")}`));
@@ -178,14 +179,25 @@ async function fetchTapeUncached(held: string[]): Promise<Tape> {
   const assets: Tape["assets"] = {};
   let fromKraken = 0;
   for (const coin of wanted) {
-    const key = pairs?.usd.get(coin)?.key;
-    const k = key ? ticker.get(key) : undefined;
+    const pair = pairs?.usd.get(coin);
+    const k = pair ? ticker.get(pair.key) : undefined;
     const g = bySymbol.get(coin);
     if (k) {
-      assets[coin] = { usd: k.usd, change24h: k.change24h, name: g?.name };
+      assets[coin] = {
+        usd: k.usd,
+        change24h: k.change24h,
+        name: g?.name,
+        src: "kraken",
+        ...(k.bid && k.ask ? { bid: k.bid, ask: k.ask } : {}),
+        ...(k.vol24hUsd ? { vol24hUsd: k.vol24hUsd } : {}),
+        ...(pair?.ordermin ? { ordermin: pair.ordermin } : {}),
+        ...(pair?.costmin ? { costmin: pair.costmin } : {}),
+        ...(pair?.lotDecimals !== undefined ? { lotDecimals: pair.lotDecimals } : {}),
+      };
       fromKraken++;
     } else if (g && gecko.fresh) {
-      assets[coin] = { usd: g.usd, change24h: g.change24h, name: g.name };
+      // No order book from the fallback source: execution estimates the spread.
+      assets[coin] = { usd: g.usd, change24h: g.change24h, name: g.name, src: "coingecko" };
     }
   }
 

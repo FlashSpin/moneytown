@@ -12,10 +12,15 @@
 export type KrakenPair = {
   /** Kraken's pair key for the Ticker endpoint, e.g. "XXBTZUSD". */
   key: string;
-  /** Minimum order size in the base coin and minimum cost in USD (for real orders later). */
+  /** Minimum order size in the base coin and minimum cost in USD. */
   ordermin?: number;
   costmin?: number;
+  /** Decimal places allowed in an order's quantity. */
+  lotDecimals?: number;
 };
+
+/** One coin's quote: last trade, best bid and ask, and 24h volume in USD. */
+export type Quote = { usd: number; change24h: number; bid?: number; ask?: number; vol24hUsd?: number };
 
 export type MarketCoin = {
   symbol: string;
@@ -64,6 +69,7 @@ export function parseKrakenPairs(body: unknown): Map<string, KrakenPair> {
       key,
       ordermin: Number(p.ordermin) || undefined,
       costmin: Number(p.costmin) || undefined,
+      lotDecimals: Number.isInteger(p.lot_decimals) ? Number(p.lot_decimals) : undefined,
     });
   }
   return out;
@@ -79,16 +85,31 @@ export function krakenGbpKey(body: unknown): string | null {
   return null;
 }
 
-/** Kraken's Ticker → price and 24h change per pair key. `c[0]` is the last trade, `o` today's open. */
-export function parseKrakenTicker(body: unknown): Map<string, { usd: number; change24h: number }> {
-  const out = new Map<string, { usd: number; change24h: number }>();
-  const result = (body as { result?: Record<string, { c?: unknown[]; o?: unknown }> })?.result;
+/**
+ * Kraken's Ticker → a quote per pair key: `c[0]` the last trade, `o` today's
+ * open, `b[0]`/`a[0]` the best bid and ask, `v[1]` the last 24h's volume in
+ * the base coin. A book that is crossed or absurdly wide is dropped (the
+ * last price still stands).
+ */
+export function parseKrakenTicker(body: unknown): Map<string, Quote> {
+  const out = new Map<string, Quote>();
+  const result = (body as { result?: Record<string, { c?: unknown[]; o?: unknown; a?: unknown[]; b?: unknown[]; v?: unknown[] }> })?.result;
   if (!result || typeof result !== "object") return out;
+  const first = (v: unknown, i = 0) => Number(Array.isArray(v) ? v[i] : NaN);
   for (const [key, t] of Object.entries(result)) {
-    const last = Number(Array.isArray(t.c) ? t.c[0] : NaN);
+    const last = first(t.c);
     const open = Number(t.o);
     if (!(last > 0)) continue;
-    out.set(key, { usd: last, change24h: open > 0 ? ((last - open) / open) * 100 : 0 });
+    const q: Quote = { usd: last, change24h: open > 0 ? ((last - open) / open) * 100 : 0 };
+    const bid = first(t.b);
+    const ask = first(t.a);
+    if (bid > 0 && ask >= bid && (ask - bid) / last < 0.05) {
+      q.bid = bid;
+      q.ask = ask;
+    }
+    const vol = first(t.v, 1);
+    if (vol > 0) q.vol24hUsd = Math.round(vol * last);
+    out.set(key, q);
   }
   return out;
 }

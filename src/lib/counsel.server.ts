@@ -82,7 +82,7 @@ export function tryNextModel(status: number): boolean {
 }
 
 /** Tried in order when the one before is unknown to the API (404) — model names move fast. */
-const GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"];
+const GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-3.6-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash-lite"];
 
 /** Google Gemini, free tier via an AI Studio key. GEMINI_MODEL overrides the model. */
 async function tryGemini(prompt: string): Promise<string | null> {

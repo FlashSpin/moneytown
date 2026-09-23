@@ -4,7 +4,7 @@ import { priceOf } from "./dawn";
 import { useGame } from "./store";
 import type { Knowledge, Tally } from "./knowledge";
 import { coinsLabel, STRATEGY_INFO, unrealized, type Position, type Strategy } from "./strategies";
-import type { Tape } from "./types";
+import type { Subject, Tape } from "./types";
 import { formatPurse } from "./wallets";
 
 /** The freshest prices the page has: the minute-by-minute feed, else the world's. */
@@ -84,7 +84,8 @@ export function TradeCard({
       )}
       {position ? (
         <p className="trade-open">
-          Open{position.own ? " (its own call)" : ""}: <strong>{position.side.toUpperCase()} {position.coin}</strong> from {formatCoinPrice(position.entryUsd)}, now{" "}
+          Open{position.own ? " (its own call)" : ""}: <strong>{position.side.toUpperCase()} {position.qty ? `${position.qty} ` : ""}{position.coin}</strong> filled at{" "}
+          {formatCoinPrice(position.entryUsd)}, now{" "}
           {formatCoinPrice(priceOf(tape, position.coin))} ·{" "}
           <Money sats={unrealized(position, priceOf(tape, position.coin))} tape={tape} /> · opened {ago(position.openedAt)}
         </p>
@@ -157,6 +158,21 @@ function Learned({ name, knowledge, tape }: { name: string; knowledge?: Knowledg
   );
 }
 
+/** How much of the parish's money is in each coin right now. */
+function Exposure({ subjects, tape }: { subjects: Subject[]; tape: Tape }) {
+  const living = subjects.filter((s) => s.state !== "condemned" && s.state !== "hanging");
+  const equity = living.reduce((n, s) => n + s.balance + (s.position ? unrealized(s.position, priceOf(tape, s.position.coin)) : 0), 0);
+  const byCoin = new Map<string, number>();
+  for (const s of living) if (s.position) byCoin.set(s.position.coin, (byCoin.get(s.position.coin) ?? 0) + s.position.stake);
+  if (!byCoin.size || !(equity > 0)) return null;
+  const rows = [...byCoin.entries()].sort((a, b) => b[1] - a[1]);
+  return (
+    <p className="books-line">
+      In the market: {rows.map(([c, st]) => `${c} ${Math.round((st / equity) * 100)}%`).join(", ")} of the parish&apos;s money (cap 25% a coin).
+    </p>
+  );
+}
+
 /** Every buy and sell in the parish, newest first. */
 export function TradingFloor() {
   const trades = useGame((s) => s.trades);
@@ -165,6 +181,8 @@ export function TradingFloor() {
   const halt = useGame((s) => s.halt);
   const risk = useGame((s) => s.risk);
   const books = useGame((s) => s.ledger);
+  const feed = useGame((s) => s.feed);
+  const subjects = useGame((s) => s.subjects);
   const tape = useBestTape();
   const blocked = Object.entries(risk?.blocked ?? {});
   return (
@@ -184,7 +202,7 @@ export function TradingFloor() {
       ) : null}
       {blocked.length ? (
         <p className="desk-line">
-          <strong>Risk limits</strong> stopped at the last check: {blocked.map(([why, n]) => `${n} × ${why}`).join(", ")}.
+          <strong>Stopped at the last check</strong> (risk limits and the exchange): {blocked.map(([why, n]) => `${n} × ${why}`).join(", ")}.
         </p>
       ) : null}
       {desk ? (
@@ -207,6 +225,14 @@ export function TradingFloor() {
         need an 8-point edge over break-even. No new trade opens for a villager down 10% on the day, on a stale price, or past 25% of the
         parish on one coin; a parish down 8% pauses until dawn.
       </p>
+      {feed ? (
+        <p className="books-line">
+          Market data: {feed.priced}/{feed.listed} coins priced ({feed.kraken} from Kraken, {feed.withBook} with a live order book)
+          {feed.stale.length ? `; stale: ${feed.stale.slice(0, 6).join(", ")}${feed.stale.length > 6 ? "…" : ""}` : ""}
+          {feed.held.length ? `; held back as suspicious: ${feed.held.join(", ")}` : ""}.
+        </p>
+      ) : null}
+      <Exposure subjects={subjects} tape={tape} />
       {books?.check ? (
         <p className={books.check.ok ? "books-line" : "books-line books-bad"}>
           {books.check.ok
@@ -241,6 +267,8 @@ export function TradingFloor() {
                   — {t.own ? "own call: " : ""}
                   {t.reason}
                   {t.action === "open" && t.risk ? ` · risking ${(t.risk * 100).toFixed(1)}%` : ""}
+                  {t.mid && t.cost !== undefined ? ` · mid ${formatCoinPrice(t.mid)}, spread & slippage ${formatPurse(t.cost, tape)}` : ""}
+                  {t.fee ? `, fee ${formatPurse(t.fee, tape)}` : ""}
                 </span>
               </span>
             </li>

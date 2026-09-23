@@ -76,6 +76,11 @@ async function describeFailure(res: Response): Promise<string> {
   return `HTTP ${res.status}${detail ? `: ${detail}` : ""}`;
 }
 
+/** Whether a failed call is worth retrying on the provider's next model (not for a bad key or a bad request). */
+export function tryNextModel(status: number): boolean {
+  return status === 404 || status === 429 || status >= 500;
+}
+
 /** Tried in order when the one before is unknown to the API (404) — model names move fast. */
 const GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"];
 
@@ -107,10 +112,11 @@ async function tryGemini(prompt: string): Promise<string | null> {
         },
       );
       if (!res.ok) {
-        // 429 = the free daily/minute quota is spent; 404 = model unknown → try the next one.
+        // 404 = model unknown, 429 = that model's free quota is spent (quotas are per model),
+        // 5xx = that model is overloaded → try the next one. A bad key (401/403) stops here.
         lastResult.set("gemini", `${model}: ${await describeFailure(res)}`);
         console.warn(`[counsel] Gemini ${lastResult.get("gemini")} — falling back.`);
-        if (res.status === 404 && !override) continue;
+        if (tryNextModel(res.status) && !override) continue;
         return null;
       }
       const body = (await res.json()) as {
@@ -133,6 +139,7 @@ async function tryGemini(prompt: string): Promise<string | null> {
       const why = error instanceof Error && error.name === "TimeoutError" ? "timed out" : "unreachable";
       lastResult.set("gemini", `${model}: ${why}`);
       console.warn(`[counsel] Gemini ${model} ${why} — falling back.`);
+      if (!override) continue;
       return null;
     }
   }
@@ -169,7 +176,7 @@ async function tryGroq(prompt: string): Promise<string | null> {
       if (!res.ok) {
         lastResult.set("groq", `${model}: ${await describeFailure(res)}`);
         console.warn(`[counsel] Groq ${lastResult.get("groq")} — falling back.`);
-        if (res.status === 404 && !override) continue;
+        if (tryNextModel(res.status) && !override) continue;
         return null;
       }
       const body = (await res.json()) as { choices?: { finish_reason?: string; message?: { content?: string } }[] };

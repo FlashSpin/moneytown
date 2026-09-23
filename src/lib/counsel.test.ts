@@ -43,15 +43,17 @@ describe("the King's AI cascade", () => {
     assert.equal(body.contents[0].parts[0].text, "prompt");
   });
 
-  it("falls back to Groq when Gemini's free quota is spent", async () => {
+  it("falls back to Groq when every Gemini model's free quota is spent", async () => {
     process.env.GEMINI_API_KEY = "g-key";
     process.env.GROQ_API_KEY = "q-key";
     mockFetch((url) => (url.includes("googleapis") ? json({ error: "quota" }, 429) : groqReply('{"say":"Aye"}')));
     const res = await askCounsel("prompt");
     assert.deepEqual(res, { ok: true, text: '{"say":"Aye"}', source: "groq" });
-    assert.equal(calls[1]!.url, "https://api.groq.com/openai/v1/chat/completions");
-    assert.equal((calls[1]!.init.headers as Record<string, string>).Authorization, "Bearer q-key");
-    assert.equal(JSON.parse(String(calls[1]!.init.body)).model, "openai/gpt-oss-120b");
+    assert.equal(calls.filter((c) => c.url.includes("googleapis")).length, 3, "each Gemini model has its own quota");
+    const groq = calls[3]!;
+    assert.equal(groq.url, "https://api.groq.com/openai/v1/chat/completions");
+    assert.equal((groq.init.headers as Record<string, string>).Authorization, "Bearer q-key");
+    assert.equal(JSON.parse(String(groq.init.body)).model, "openai/gpt-oss-120b");
   });
 
   it("tries older Gemini models when a model name is unknown (404)", async () => {
@@ -65,6 +67,29 @@ describe("the King's AI cascade", () => {
     // Gemini 2.5 takes no thinkingLevel; Gemini 3 does.
     assert.equal(JSON.parse(String(calls[0]!.init.body)).generationConfig.thinkingConfig.thinkingLevel, "low");
     assert.equal(JSON.parse(String(calls[1]!.init.body)).generationConfig.thinkingConfig, undefined);
+  });
+
+  it("tries the next Gemini model when one is overloaded (503) or out of quota (429)", async () => {
+    process.env.GEMINI_API_KEY = "g-key";
+    mockFetch((url) =>
+      url.includes("gemini-3.1-flash-lite")
+        ? json({ error: { message: "high demand" } }, 503)
+        : url.includes("gemini-2.5-flash-lite")
+          ? json({ error: { message: "quota" } }, 429)
+          : geminiReply('{"say":"Hark"}'),
+    );
+    const res = await askCounsel("prompt");
+    assert.equal(res.ok && res.source, "gemini");
+    assert.equal(calls.length, 3);
+    assert.match(calls[2]!.url, /models\/gemini-2\.5-flash:generateContent$/);
+  });
+
+  it("stops at a bad key rather than trying every model", async () => {
+    process.env.GEMINI_API_KEY = "g-key";
+    mockFetch(() => json({ error: { message: "API key not valid" } }, 400));
+    const res = await askCounsel("prompt", { freeOnly: true });
+    assert.equal(res.ok, false);
+    assert.equal(calls.filter((c) => c.url.includes("googleapis")).length, 1);
   });
 
   it("reports why each provider failed, without leaking keys", async () => {

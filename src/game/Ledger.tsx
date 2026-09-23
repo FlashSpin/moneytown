@@ -1,12 +1,14 @@
-import { Crown, ScrollText } from "lucide-react";
-import { HANG_BELOW_GBP, LIVING_CAP, RENT_GBP } from "./constants";
+import * as Tabs from "@radix-ui/react-tabs";
+import { CandlestickChart, CircleHelp, Crown, LayoutDashboard, ScrollText, Users } from "lucide-react";
+import { useEffect } from "react";
+import { HANG_BELOW_GBP, LIVING_CAP } from "./constants";
 import { KingAudience } from "./KingAudience";
-import { stallCoins } from "./dawn";
-import { useGame } from "./store";
+import { useGame, type LedgerTab } from "./store";
 import type { Asset, Side } from "./dawn";
 import { CouncilPanel } from "./CouncilPanel";
 import { LawsPanel, NextRank, ObjectivePanel, RankBadge } from "./Progress";
-import { RollPosition, TradeCard, TradingFloor } from "./TradingViews";
+import { ChronicleList, DawnReport, Guide, KeyActions, KpiTiles, LatestTrades, PositionsList, StatusCard, TradeHistory } from "./Dashboard";
+import { RollPosition, TradeCard } from "./TradingViews";
 import type { Position, Strategy } from "./strategies";
 import { TEMPER_DESCRIPTIONS, temperOf, type Temper } from "./trading";
 import type { Knowledge } from "./knowledge";
@@ -55,21 +57,6 @@ function PositionLine({ target, tape }: { target: WalletTarget; tape: Tape }) {
         {today >= 0 ? "+" : "-"}
         {formatPurse(Math.abs(today), tape)}
       </span>
-    </p>
-  );
-}
-
-function MarketLine() {
-  const world = useGame((s) => s.tape);
-  const live = useGame((s) => s.liveTape);
-  const tape = live && !live.dark ? live : world;
-  if (tape.dark) return <p className="hint market-line">Market: prices unavailable — villagers sit out until they return.</p>;
-  const n = Math.min(20, stallCoins(world, live).length);
-  const mins = tape.fetchedAt ? Math.max(0, Math.round((Date.now() - tape.fetchedAt) / 60_000)) : null;
-  return (
-    <p className="hint market-line">
-      Market: {n} coins, one stall each · prices from <strong>{tape.source}</strong>
-      {mins !== null ? ` · ${mins < 1 ? "just now" : `${mins} min ago`}` : ""}
     </p>
   );
 }
@@ -140,16 +127,29 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
 }
 
 export function Ledger() {
-  const exchequer = useGame((s) => s.exchequer);
   const king = useGame((s) => s.king);
   const subjects = useGame((s) => s.subjects);
   const taxRate = useGame((s) => s.taxRate);
   const taxByDecree = useGame((s) => s.decree?.taxRate !== undefined);
   const tape = useGame((s) => s.tape);
   const day = useGame((s) => s.day);
-  const log = useGame((s) => s.log);
   const selectedId = useGame((s) => s.selectedId);
   const select = useGame((s) => s.select);
+  const tab = useGame((s) => s.tab);
+  const setTab = useGame((s) => s.setTab);
+  const setGuide = useGame((s) => s.setGuide);
+
+  // A first-time visitor gets the guide once; after that it's behind the help button.
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(WELCOMED_KEY)) {
+        localStorage.setItem(WELCOMED_KEY, "1");
+        setGuide(true);
+      }
+    } catch {
+      // Storage unavailable (private mode): skip the automatic welcome.
+    }
+  }, [setGuide]);
 
   const selected = selectedId === "king" ? null : (subjects.find((s) => s.id === selectedId) ?? null);
   const living = subjects.filter((s) => s.state !== "hanging" && s.state !== "condemned");
@@ -165,139 +165,164 @@ export function Ledger() {
   };
 
   return (
-    <aside className="ledger">
+    <aside className="ledger" aria-label="The parish ledger">
       <header className="ledger-head">
-        <p className="ledger-kicker">Parish of</p>
-        <h1>Ledgerford</h1>
-        <p className="ledger-day">Day {day}</p>
+        <div>
+          <p className="ledger-kicker">Parish of</p>
+          <h1>Ledgerford</h1>
+          <p className="ledger-day">
+            Day {day} <LiveStatus />
+          </p>
+        </div>
+        <button type="button" className="icon-btn" onClick={() => setGuide(true)} aria-label="How it works">
+          <CircleHelp size={20} />
+        </button>
       </header>
 
-      <section className="stat-grid">
-        <div>
-          <p className="section-label">Exchequer</p>
-          <p className="stat-num">{formatPurse(exchequer, tape)}</p>
-        </div>
-        <div>
-          <p className="section-label">King</p>
-          <button type="button" className="stat-hit" onClick={() => select("king")}>
-            <p className="stat-num">{formatPurse(king.balance, tape)}</p>
-          </button>
-        </div>
-      </section>
-      <p className="hint">Sum of every purse, in pounds. Click a name to inspect.</p>
-      <p className="hint">
-        Each soul trades the top 50 coins on the Kraken exchange (the top 20 have stalls) at real, live prices — paper only, no
-        real money. The villagers are day-trading bots: every 5 minutes each one&apos;s own strategy trades on
-        its signals, and at the trading desk they place their own trades when they see a clear edge. Every trade
-        is sized by the Kelly criterion from what they have learned. The King advises and the villagers choose their strategies at a council every few
-        hours. At dawn he taxes the day&apos;s banked profits.
-      </p>
-
-      <section className="tithe-row">
-        <p className="section-label">King's tax on profits — {taxByDecree ? "by royal decree" : "set by the crown"}</p>
-        <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
-      </section>
-
-      <ObjectivePanel tape={tape} />
-
-      <LawsPanel taxRate={taxRate} />
-
-      <MarketLine />
-
-      <KingAudience />
-
-      <section>
-        <p className="section-label">
-          Parish · {living.length}/{LIVING_CAP} living
-        </p>
-        {living.length === 0 ? (
-          <p className="hint">No souls yet. Petition the King to summon one, or wait for his treasury to open one at dawn.</p>
-        ) : (
-          <ul className="parish-roll">
-            {living.map((sub) => (
-              <li key={sub.id}>
-                <button type="button" className="roll-hit" onClick={() => select(sub.id)}>
-                  <span className="roll-name">
-                    <span>
-                      {sub.firstName} <RankBadge record={sub.record} />
-                    </span>
-                    <RollPosition strategy={sub.strategy} position={sub.position} />
-                  </span>
-                  <span className="roll-figures">
-                    <span className="roll-money">{formatPurse(sub.balance, tape)}</span>
-                    <TodayTag today={sub.balance - (sub.dayStart ?? sub.balance)} tape={tape} />
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      <p className="hint transfer">
-        Stake £20 to start. Upkeep £{RENT_GBP.toFixed(2)} a day; the King&apos;s tax is on profits only.
-        Below £{HANG_BELOW_GBP}, the gallows.
-      </p>
-
-      {selected ? (
-        <WalletInspect
-          tape={tape}
-          target={{
-            id: selected.id,
-            title: selected.firstName,
-            wallet: selected.wallet,
-            balance: selected.balance,
-            lastFlavor: selected.lastFlavor,
-            king: false,
-            side: selected.side,
-            asset: selected.asset,
-            lastPnl: selected.lastPnl,
-            size: selected.size,
-            today: selected.balance - (selected.dayStart ?? selected.balance),
-            advice: selected.advice,
-            plan: selected.plan,
-            temper: selected.temper,
-            followsKing: selected.followsKing,
-            record: selected.record,
-            strategy: selected.strategy,
-            position: selected.position,
-            trades: selected.trades,
-            knowledge: selected.knowledge,
-          }}
-        />
-      ) : selectedId === "king" ? (
-        <WalletInspect target={kingTarget} tape={tape} />
-      ) : (
-        <section className="inspect">
-          <p className="section-label">The square</p>
-          <p className="hint">Click a name to inspect its wallet and position.</p>
-        </section>
-      )}
-
-      <TradingFloor />
-
-      <CouncilPanel />
-
-      <section className="log">
-        <p className="section-label">
-          <ScrollText size={13} /> Chronicle
-        </p>
-        <ol>
-          {log.slice(0, 14).map((entry) => (
-            <li key={entry.id} data-kind={entry.kind}>
-              {entry.at ? (
-                <time className="log-time" dateTime={new Date(entry.at).toISOString()}>
-                  Day {entry.day} · {new Date(entry.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </time>
-              ) : null}
-              {entry.text}
-            </li>
+      <Tabs.Root value={tab} onValueChange={(v) => setTab(v as LedgerTab)} className="tabs">
+        <Tabs.List className="tab-list" aria-label="Ledger sections">
+          {TABS.map((t) => (
+            <Tabs.Trigger key={t.id} value={t.id} className="tab">
+              <t.icon size={16} aria-hidden />
+              <span>{t.label}</span>
+            </Tabs.Trigger>
           ))}
-        </ol>
-      </section>
+        </Tabs.List>
+
+        <Tabs.Content value="overview" className="tab-panel">
+          <KpiTiles />
+          <KeyActions />
+          <ObjectivePanel tape={tape} />
+          <StatusCard />
+          <DawnReport />
+          <LatestTrades />
+        </Tabs.Content>
+
+        <Tabs.Content value="trading" className="tab-panel">
+          <PositionsList />
+          <TradeHistory />
+          <p className="card-note">
+            <a href="/backtest">How the strategies did in backtests</a> — replayed on past prices, judged on data they never saw.
+          </p>
+        </Tabs.Content>
+
+        <Tabs.Content value="parish" className="tab-panel">
+          {selected ? (
+            <WalletInspect
+              tape={tape}
+              target={{
+                id: selected.id,
+                title: selected.firstName,
+                wallet: selected.wallet,
+                balance: selected.balance,
+                lastFlavor: selected.lastFlavor,
+                king: false,
+                side: selected.side,
+                asset: selected.asset,
+                lastPnl: selected.lastPnl,
+                size: selected.size,
+                today: selected.balance - (selected.dayStart ?? selected.balance),
+                advice: selected.advice,
+                plan: selected.plan,
+                temper: selected.temper,
+                followsKing: selected.followsKing,
+                record: selected.record,
+                strategy: selected.strategy,
+                position: selected.position,
+                trades: selected.trades,
+                knowledge: selected.knowledge,
+              }}
+            />
+          ) : selectedId === "king" ? (
+            <WalletInspect target={kingTarget} tape={tape} />
+          ) : null}
+
+          <section className="card" aria-labelledby="roll-title">
+            <h2 id="roll-title" className="card-title">
+              The parish · {living.length}/{LIVING_CAP} living
+            </h2>
+            {living.length === 0 ? (
+              <p className="empty-note">No souls yet. Ask the King to summon one, or wait for his treasury to open one at dawn.</p>
+            ) : (
+              <ul className="parish-roll">
+                {living.map((sub) => (
+                  <li key={sub.id}>
+                    <button type="button" className="roll-hit" onClick={() => select(sub.id)} aria-pressed={selectedId === sub.id}>
+                      <span className="roll-name">
+                        <span>
+                          {sub.firstName} <RankBadge record={sub.record} />
+                        </span>
+                        <RollPosition strategy={sub.strategy} position={sub.position} />
+                      </span>
+                      <span className="roll-figures">
+                        <span className="roll-money">{formatPurse(sub.balance, tape)}</span>
+                        <TodayTag today={sub.balance - (sub.dayStart ?? sub.balance)} tape={tape} />
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button type="button" className="link-btn" onClick={() => select("king")}>
+              <Crown size={14} aria-hidden /> The King&apos;s treasury
+            </button>
+          </section>
+
+          <section className="tithe-row">
+            <p className="section-label">King&apos;s tax on profits — {taxByDecree ? "by royal decree" : "set by the crown"}</p>
+            <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
+          </section>
+          <LawsPanel taxRate={taxRate} />
+          <CouncilPanel />
+        </Tabs.Content>
+
+        <Tabs.Content value="king" className="tab-panel">
+          <KingAudience />
+        </Tabs.Content>
+
+        <Tabs.Content value="chronicle" className="tab-panel">
+          <ChronicleList />
+        </Tabs.Content>
+      </Tabs.Root>
 
       <footer className="ledger-foot">
-        <p>A live, shared simulation — the King's treasury and every villager trade on their own, once a day.</p>
+        <p>A live, shared simulation on real prices with pretend money. Nothing here is financial advice.</p>
       </footer>
+      <Guide />
     </aside>
+  );
+}
+
+const WELCOMED_KEY = "ledgerford.welcomed";
+
+const TABS: { id: LedgerTab; label: string; icon: typeof Crown }[] = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "trading", label: "Trading", icon: CandlestickChart },
+  { id: "parish", label: "Parish", icon: Users },
+  { id: "king", label: "King", icon: Crown },
+  { id: "chronicle", label: "Chronicle", icon: ScrollText },
+];
+
+/** Live, paused, halted or dark — at a glance, with words, not colour alone. */
+function LiveStatus() {
+  const halt = useGame((s) => s.halt);
+  const paused = useGame((s) => s.risk?.pausedToday);
+  const dark = useGame((s) => s.tape.dark);
+  const lastTickAt = useGame((s) => s.lastTickAt);
+  const stale = !lastTickAt || Date.now() - lastTickAt > 20 * 60_000;
+  const [label, tone] = halt
+    ? ["Trading halted", "bad"]
+    : dark
+      ? ["No prices", "bad"]
+      : paused
+        ? ["Paused until dawn", "warn"]
+        : stale
+          ? ["Waiting for a tick", "warn"]
+          : ["Trading live", "good"];
+  return (
+    <span className={`pill pill-${tone}`} role="status">
+      <span className="pill-dot" aria-hidden />
+      {label}
+    </span>
   );
 }

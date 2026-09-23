@@ -1,16 +1,27 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+export type CounselSource = "gemini" | "groq" | "claude" | "grok" | "pollinations";
+
+const SYSTEM =
+  "You are the wits of a 16th-century English market town. Reply with JSON only. No markdown. No jobs. No keys.";
+
 /**
- * The town's AI cascade: Claude (when ANTHROPIC_API_KEY is set), then Grok
- * (when XAI_API_KEY is set), then free Pollinations — all server-to-server.
+ * The town's AI cascade, free providers first so a paid key is only spent
+ * once the free quota runs out: Gemini (GEMINI_API_KEY, free tier), Groq
+ * (GROQ_API_KEY, free tier), Claude (ANTHROPIC_API_KEY), Grok (XAI_API_KEY),
+ * then keyless Pollinations. Each step is skipped when its key is unset.
  * Called from the daily-tick cron path (src/game/llm.server.ts) and from
  * petitions to the King (src/lib/petition.ts), which is rate-limited per
  * visitor and capped per day there.
  */
 export async function askCounsel(prompt: string): Promise<
-  | { ok: true; text: string; source: "claude" | "grok" | "pollinations" }
+  | { ok: true; text: string; source: CounselSource }
   | { ok: false; error: string }
 > {
+  const gemini = await tryGemini(prompt);
+  if (gemini) return { ok: true, text: gemini, source: "gemini" };
+  const groq = await tryGroq(prompt);
+  if (groq) return { ok: true, text: groq, source: "groq" };
   const claude = await tryClaude(prompt);
   if (claude) return { ok: true, text: claude, source: "claude" };
   const grok = await tryGrok(prompt);
@@ -18,6 +29,87 @@ export async function askCounsel(prompt: string): Promise<
   const poll = await tryPollinations(prompt);
   if (poll) return { ok: true, text: poll, source: "pollinations" };
   return { ok: false, error: "AI is not available" };
+}
+
+function key(name: string): string | null {
+  return process.env[name]?.trim() || null;
+}
+
+/** Google Gemini, free tier via an AI Studio key. GEMINI_MODEL overrides the model. */
+async function tryGemini(prompt: string): Promise<string | null> {
+  const apiKey = key("GEMINI_API_KEY");
+  if (!apiKey) return null;
+  const model = key("GEMINI_MODEL") ?? "gemini-3.1-flash-lite";
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM }] },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.8, maxOutputTokens: 2048, responseMimeType: "application/json" },
+        }),
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+    if (!res.ok) {
+      // 429 = the free daily/minute quota is spent; the cascade moves on.
+      console.warn(`[counsel] Gemini HTTP ${res.status} — falling back.`);
+      return null;
+    }
+    const body = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+    };
+    const text = (body.candidates?.[0]?.content?.parts ?? [])
+      .filter((p) => !p.thought)
+      .map((p) => p.text ?? "")
+      .join("")
+      .trim();
+    return text || null;
+  } catch {
+    console.warn("[counsel] Gemini unreachable — falling back.");
+    return null;
+  }
+}
+
+/**
+ * Groq, free tier. OpenAI-style endpoint; no response_format because Groq's
+ * JSON modes are unreliable on gpt-oss — the callers' parsers are tolerant.
+ * GROQ_MODEL overrides the model.
+ */
+async function tryGroq(prompt: string): Promise<string | null> {
+  const apiKey = key("GROQ_API_KEY");
+  if (!apiKey) return null;
+  const model = key("GROQ_MODEL") ?? "openai/gpt-oss-120b";
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        temperature: 0.8,
+        max_completion_tokens: 2048,
+        reasoning_effort: "low",
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      console.warn(`[counsel] Groq HTTP ${res.status} — falling back.`);
+      return null;
+    }
+    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const text = body.choices?.[0]?.message?.content?.trim() ?? "";
+    return text || null;
+  } catch {
+    console.warn("[counsel] Groq unreachable — falling back.");
+    return null;
+  }
 }
 
 let claudeClient: Anthropic | null = null;
@@ -35,8 +127,7 @@ async function tryClaude(prompt: string): Promise<string | null> {
       // On a policy decline, the API re-runs the request on a fallback model.
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      system:
-        "You are the wits of a 16th-century English market town. Reply with JSON only. No markdown. No jobs. No keys.",
+      system: SYSTEM,
       messages: [{ role: "user", content: prompt }],
     });
     if (response.stop_reason === "refusal") return null;

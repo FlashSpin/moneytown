@@ -73,6 +73,7 @@ export function Ledger() {
   const king = useGame((s) => s.king);
   const subjects = useGame((s) => s.subjects);
   const taxRate = useGame((s) => s.taxRate);
+  const taxByDecree = useGame((s) => s.decree?.taxRate !== undefined);
   const tape = useGame((s) => s.tape);
   const day = useGame((s) => s.day);
   const log = useGame((s) => s.log);
@@ -120,7 +121,7 @@ export function Ledger() {
       </p>
 
       <section className="tithe-row">
-        <p className="section-label">King's tax — set by the crown</p>
+        <p className="section-label">King's tax — {taxByDecree ? "by royal decree" : "set by the crown"}</p>
         <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
       </section>
 

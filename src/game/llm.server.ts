@@ -1,14 +1,14 @@
 /**
  * AI counsel for the daily tick — server-only. Everyone (King and every
- * villager) shares one fixed cascade: Claude, then Grok, then free
- * Pollinations (see src/lib/counsel.server.ts), then the
+ * villager) shares one fixed cascade (Gemini, Groq, Claude, Grok,
+ * Pollinations — see src/lib/counsel.server.ts), then the
  * caller's own heuristic fallback (this module never invents a decision
  * itself; `counselDawn` returns null on total failure). There is no more
  * per-soul model choice — that was a player-facing control, now removed —
  * and no local-model backends (Ollama/LM Studio/on-device), which only ever
  * made sense from a visitor's own browser, not a server cron.
  */
-import { askCounsel } from "@/lib/counsel.server";
+import { askCounsel, type CounselSource } from "@/lib/counsel.server";
 import { RENT_GBP, SHOUT_LIFE, SPEECH_LIFE, TAX_MAX, TAX_MIN } from "./constants";
 import { ASSETS, type Asset, type Side } from "./dawn";
 import { trimSpeech } from "./brains";
@@ -37,6 +37,14 @@ export type DawnCounsel = {
 };
 
 const SIDES: Side[] = ["long", "short", "flat"];
+
+export const BRAIN_LABELS: Record<CounselSource, string> = {
+  gemini: "Gemini (free)",
+  groq: "Groq (free)",
+  claude: "Claude",
+  grok: "Grok (online)",
+  pollinations: "Free online wits",
+};
 
 function extractJson(text: string): unknown {
   const trimmed = text.trim();
@@ -194,12 +202,7 @@ function parseCounsel(
 async function decide(prompt: string): Promise<{ text: string; brain: BrainInfo }> {
   const res = await askCounsel(prompt);
   if (res.ok && res.text.trim()) {
-    const brain: BrainInfo =
-      res.source === "claude"
-        ? { kind: "claude", label: "Claude" }
-        : res.source === "pollinations"
-          ? { kind: "pollinations", label: "Free online wits" }
-          : { kind: "grok", label: "Grok (online)" };
+    const brain: BrainInfo = { kind: res.source, label: BRAIN_LABELS[res.source] };
     return { text: res.text, brain };
   }
   throw new Error(res.ok ? "empty reply" : res.error);

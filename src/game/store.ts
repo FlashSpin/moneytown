@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getWorldState } from "@/lib/world";
-import { petitionTheKing } from "@/lib/petition";
+import { petitionTheKing, presentSeal } from "@/lib/petition";
 import { playDawn, playHang, playShout, playSpawn, playTalk } from "./audio";
 import { ambientTalk, trimSpeech } from "./brains";
 import { HANG_SECS, POI, SHOUT_LIFE, WALK_SPEED } from "./constants";
@@ -18,6 +18,10 @@ type ViewState = {
   petitioning: boolean;
   /** Which AI answered the last petition; null = none reachable (stock replies); undefined = not asked yet. */
   kingBrain: string | null | undefined;
+  /** The royal seal passphrase this visitor presented, kept on their own device only. */
+  seal: string | null;
+  /** True once the server has accepted `seal`. */
+  sovereign: boolean;
   selectedId: string | null;
   loading: boolean;
   /** True once a real server world has been applied (the placeholder is not one). */
@@ -30,6 +34,11 @@ type ViewState = {
 type Actions = {
   loadWorld: () => Promise<void>;
   petition: (message: string) => Promise<void>;
+  /** Try a seal passphrase; resolves to whether the server accepted it. */
+  offerSeal: (passphrase: string) => Promise<boolean>;
+  forgetSeal: () => void;
+  /** Re-check a seal remembered on this device (on page load). */
+  restoreSeal: () => Promise<void>;
   select: (id: string | null) => void;
   tick: (dt: number) => void;
 };
@@ -40,6 +49,25 @@ function actor(s: GameState, id: string): King | Subject | null {
 }
 
 type Store = GameState & ViewState & Actions;
+
+const SEAL_KEY = "ledgerford.seal";
+
+function readSeal(): string | null {
+  try {
+    return window.localStorage.getItem(SEAL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeSeal(seal: string | null) {
+  try {
+    if (seal) window.localStorage.setItem(SEAL_KEY, seal);
+    else window.localStorage.removeItem(SEAL_KEY);
+  } catch {
+    // Private mode / blocked storage: the seal just won't be remembered.
+  }
+}
 
 /**
  * Fold a server world into the live view. A new day replaces everything; the
@@ -53,23 +81,36 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     return { ...world, loading: false, synced: true, error: null };
   }
   const known = new Set(prev.subjects.map((x) => x.id));
+  const onServer = new Set(world.subjects.map((x) => x.id));
   // Condemned souls already hanged (and removed) here must not walk back in.
   const arrivals = world.subjects.filter(
     (x) => !known.has(x.id) && x.state !== "condemned" && x.state !== "hanging",
   );
+  // Souls banished by royal decree are gone from the server's roll.
+  const kept = prev.subjects.filter((x) => onServer.has(x.id));
   const logIds = new Set(prev.log.map((e) => e.id));
   const fresh = world.log.filter((e) => !logIds.has(e.id));
-  if (!arrivals.length && !fresh.length && world.king.balance === prev.king.balance) {
+  const crownChanged =
+    world.king.balance !== prev.king.balance ||
+    world.taxRate !== prev.taxRate ||
+    world.king.favorAsset !== prev.king.favorAsset;
+  if (!arrivals.length && kept.length === prev.subjects.length && !fresh.length && !crownChanged) {
     return prev.error ? { error: null } : null;
   }
   if (arrivals.length) playSpawn();
   prev.king.balance = world.king.balance;
+  prev.king.favorAsset = world.king.favorAsset;
+  const gone = new Set(prev.subjects.filter((x) => !onServer.has(x.id)).map((x) => x.id));
   return {
-    subjects: [...prev.subjects, ...arrivals],
+    subjects: [...kept, ...arrivals],
     king: prev.king,
     exchequer: world.exchequer,
+    taxRate: world.taxRate,
+    decree: world.decree,
     log: [...fresh, ...prev.log].slice(0, 80),
     petitions: world.petitions,
+    speech: gone.size ? prev.speech.filter((l) => !gone.has(l.fromId) && !(l.toId && gone.has(l.toId))) : prev.speech,
+    selectedId: prev.selectedId && gone.has(prev.selectedId) ? null : prev.selectedId,
     error: null,
   };
 }
@@ -84,6 +125,8 @@ export const useGame = create<Store>((set, get) => ({
   audience: [],
   petitioning: false,
   kingBrain: undefined,
+  seal: null,
+  sovereign: false,
   selectedId: null,
   loading: true,
   synced: false,
@@ -110,7 +153,7 @@ export const useGame = create<Store>((set, get) => ({
     const line = (from: AudienceLine["from"], t: string): AudienceLine => ({ id: uid("a", Math.random), from, text: t });
     set({ petitioning: true, audience: [...get().audience, line("you", text)] });
     try {
-      const res = await petitionTheKing({ data: { message: text, history } });
+      const res = await petitionTheKing({ data: { message: text, history, seal: get().seal ?? undefined } });
       if ("throttled" in res) {
         set({ audience: [...get().audience, line("note", "The herald bids thee wait a moment before speaking again.")] });
         return;
@@ -119,7 +162,14 @@ export const useGame = create<Store>((set, get) => ({
       if (patch) set(patch);
       const notes: AudienceLine[] = [];
       if (res.summoned.length) notes.push(line("note", `Summoned: ${res.summoned.join(", ")}.`));
+      if (res.banished.length) notes.push(line("note", `Banished: ${res.banished.join(", ")}.`));
+      for (const d of res.decrees) notes.push(line("note", d));
       if (res.limitNote) notes.push(line("note", res.limitNote));
+      // A seal the server no longer accepts (changed in Vercel) is dropped.
+      if (get().seal && !res.sovereign) {
+        writeSeal(null);
+        set({ seal: null, sovereign: false });
+      }
       set({ audience: [...get().audience, line("king", res.reply), ...notes].slice(-30), kingBrain: res.brain });
       // The King says it aloud in the square, too — replacing whatever he
       // was still saying, so two royal bubbles never stack.
@@ -140,6 +190,37 @@ export const useGame = create<Store>((set, get) => ({
       set({ audience: [...get().audience, line("note", "The King could not be reached. Try again shortly.")] });
     } finally {
       set({ petitioning: false });
+    }
+  },
+
+  offerSeal: async (passphrase) => {
+    const seal = passphrase.trim();
+    if (!seal) return false;
+    try {
+      const res = await presentSeal({ data: { seal } });
+      if (!res.sovereign) return false;
+      writeSeal(seal);
+      set({ seal, sovereign: true });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  forgetSeal: () => {
+    writeSeal(null);
+    set({ seal: null, sovereign: false });
+  },
+
+  restoreSeal: async () => {
+    const seal = readSeal();
+    if (!seal) return;
+    try {
+      const res = await presentSeal({ data: { seal } });
+      if (res.sovereign) set({ seal, sovereign: true });
+      else if (!res.throttled) writeSeal(null);
+    } catch {
+      // Offline: try again on the next page load.
     }
   },
 

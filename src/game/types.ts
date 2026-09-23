@@ -145,6 +145,17 @@ export type GameState = {
   desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo; error?: string };
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
+  /**
+   * Postings made by this change, not yet saved — written to the append-only
+   * ledger in the same statement as the world, then dropped (src/lib/world.server.ts).
+   */
+  postings?: import("./ledger.ts").Posting[];
+  /** The ledger: when it opened, and the latest check of every purse against it. */
+  ledger?: { since: number; check?: import("./ledger.ts").Reconciliation };
+  /** Trading halted: no new trades open (open ones are still managed). Set by the seal-bearer or a failed ledger check. */
+  halt?: { at: number; reason: string; by: "seal" | "ledger" };
+  /** The latest trading tick's risk checks: trades blocked, by reason. */
+  risk?: { at: number; blocked: Record<string, number>; pausedToday?: { day: number; reason: string } };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset };
 };

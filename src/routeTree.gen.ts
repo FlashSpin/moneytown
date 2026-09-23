@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiLedgerRouteImport } from './routes/api/ledger'
 import { Route as ApiReviewRouteImport } from './routes/api/review'
 import { Route as ApiTickRouteImport } from './routes/api/tick'
 import { Route as ApiTradeRouteImport } from './routes/api/trade'
@@ -17,6 +18,11 @@ import { Route as ApiTradeRouteImport } from './routes/api/trade'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLedgerRoute = ApiLedgerRouteImport.update({
+  id: '/api/ledger',
+  path: '/api/ledger',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiReviewRoute = ApiReviewRouteImport.update({
@@ -37,12 +43,14 @@ const ApiTradeRoute = ApiTradeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
   '/api/trade': typeof ApiTradeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
   '/api/trade': typeof ApiTradeRoute
@@ -50,20 +58,28 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
   '/api/trade': typeof ApiTradeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/review' | '/api/tick' | '/api/trade'
+  fullPaths: '/' | '/api/ledger' | '/api/review' | '/api/tick' | '/api/trade'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/review' | '/api/tick' | '/api/trade'
-  id: '__root__' | '/' | '/api/review' | '/api/tick' | '/api/trade'
+  to: '/' | '/api/ledger' | '/api/review' | '/api/tick' | '/api/trade'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/ledger'
+    | '/api/review'
+    | '/api/tick'
+    | '/api/trade'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiLedgerRoute: typeof ApiLedgerRoute
   ApiReviewRoute: typeof ApiReviewRoute
   ApiTickRoute: typeof ApiTickRoute
   ApiTradeRoute: typeof ApiTradeRoute
@@ -76,6 +92,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/ledger': {
+      id: '/api/ledger'
+      path: '/api/ledger'
+      fullPath: '/api/ledger'
+      preLoaderRoute: typeof ApiLedgerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/review': {
@@ -104,6 +127,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiLedgerRoute: ApiLedgerRoute,
   ApiReviewRoute: ApiReviewRoute,
   ApiTickRoute: ApiTickRoute,
   ApiTradeRoute: ApiTradeRoute,

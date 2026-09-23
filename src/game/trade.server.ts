@@ -11,9 +11,11 @@
 import { loadTape } from "@/lib/tape.server";
 import { SHOUT_LIFE } from "./constants";
 import { marketCoins, priceOf, scanCoins } from "./dawn";
-import { appendTick, seriesOf, type Ticks } from "./indicators";
+import { appendTick, tradingSeries, type Ticks } from "./indicators";
+import { haltReason, riskBook, type Gate } from "./limits";
 import { standAt } from "./shops";
 import { addLesson } from "./knowledge";
+import { Journal, withPostings } from "./ledger";
 import { DESK_DEFAULT_GAP, tradingDesk, type CouncilSoul, type Desk } from "./llm.server";
 import { defaultStrategy, deskStep, tradeStep, type Strategy, type TradeEvent, type Trader } from "./strategies";
 import { wanderPoint } from "./town";
@@ -80,8 +82,16 @@ export function tradeParish(
   ticks: Ticks,
   now: number,
   desk?: Pick<Desk, "orders" | "lessons"> | null,
-): { subjects: Subject[]; events: TradeEvent[]; speech: SpeechLine[]; skipped: number } {
+  env?: string,
+): {
+  subjects: Subject[];
+  events: TradeEvent[];
+  speech: SpeechLine[];
+  skipped: number;
+  risk: NonNullable<GameState["risk"]>;
+} {
   const market = marketCoins(tape);
+  const book = riskBook({ state, ticks, now, priceOf: (coin) => priceOf(tape, coin), env });
   const universe = tradableCoins(tape);
   const hot = new Set(tape.trending ?? []);
   let skipped = 0;
@@ -109,18 +119,26 @@ export function tradeParish(
       knowledge: lesson ? addLesson(s.knowledge, lesson) : s.knowledge,
     };
     const px = (coin: string) => priceOf(tape, coin);
+    const gate = book.gateFor(s);
+    // Every block is counted, so the ledger shows what the limits stopped.
+    const counted: Gate = (coin, st) => {
+      const why = gate(coin, st);
+      if (why) book.block(why);
+      return why;
+    };
     const order = desk?.orders.get(s.id);
     // Its own call at the desk, if it made one that could be carried out; otherwise its strategy trades.
-    const own = order ? deskStep(me, order, px, now, stake) : null;
+    const own = order ? deskStep(me, order, px, now, stake, counted) : null;
     if (own?.skipped) skipped++;
     const step = own?.events.length
       ? { trader: own.trader, fills: own.events }
       : (() => {
-          const r = tradeStep(me, px, (coin) => seriesOf(ticks, coin), now, stake, universe, hot);
+          const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, counted);
           return { trader: r.trader, fills: r.event ? [r.event] : [] };
         })();
     const trader = step.trader;
     const event = step.fills[step.fills.length - 1];
+    if (trader.position && step.fills.some((f) => f.action === "open")) book.opened(trader.position.coin, trader.position.stake);
     const next: Subject = {
       ...s,
       strategy,
@@ -159,12 +177,20 @@ export function tradeParish(
     const dest = event.action === "open" ? standAt(event.coin, market) : wanderPoint(rng);
     return { ...next, destX: dest.x + (rng() - 0.5) * 36, destY: dest.y + rng() * 16, state: "walk" as const, lastPnl: event.pnl ?? next.lastPnl };
   });
-  return { subjects, events, speech: speech.slice(0, 8), skipped };
+  return {
+    subjects,
+    events,
+    speech: speech.slice(0, 8),
+    skipped,
+    risk: { at: now, blocked: book.blocked, ...(book.pausedToday ? { pausedToday: book.pausedToday } : {}) },
+  };
 }
 
 /** Whether the villagers want to look at the market with the AI this tick (a minute's grace for a late schedule). */
 export function deskDue(state: GameState, now: number, force = false): boolean {
   if (process.env.TRADING_DESK?.trim().toLowerCase() === "off") return false;
+  // No new trades can open while halted, so there's nothing to ask the AI.
+  if (haltReason(state, process.env.TRADING_HALT)) return false;
   if (!state.subjects.some(isLiving)) return false;
   return force || now + 60_000 >= (state.desk?.nextAt ?? 0);
 }
@@ -196,9 +222,11 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
   }
   const answer = due ? memo.desk : undefined;
   const desk = answer && !("error" in answer) ? answer : null;
-  const { subjects, events, speech, skipped } = tradeParish({ ...prev, tape }, tape, ticks, now, desk);
+  const { subjects, events, speech, skipped, risk } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
+  const journal = new Journal({ at: now, day: prev.day }, "trade");
+  for (const e of events) journal.fill(e);
   return withTotals({
-    ...prev,
+    ...withPostings(prev, journal.postings),
     tape,
     ticks,
     subjects,
@@ -217,5 +245,6 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     speech: speech.length ? speech : prev.speech,
     speechAt: speech.length ? now : prev.speechAt,
     lastTickAt: now,
+    risk,
   });
 }

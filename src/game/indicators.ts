@@ -54,7 +54,15 @@ export function volatility(series: number[], n = 12): number | null {
 // ── The tick history: a rolling window of prices for every coin ─────────────
 
 /** One price per coin per trading tick, oldest first; `t` holds the tick times. */
-export type Ticks = { t: number[]; px: Record<string, number[]> };
+export type Ticks = {
+  t: number[];
+  px: Record<string, number[]>;
+  /** When each coin last had a real price (a missing price repeats the last one in `px`). */
+  seen?: Record<string, number>;
+};
+
+/** Samples further apart than this are a gap (the ticks stopped), not one step. */
+export const MAX_GAP_MS = 12 * 60_000;
 
 /** Samples kept: 24 hours at one per 5 minutes. */
 export const TICKS_KEPT = 288;
@@ -65,7 +73,8 @@ export const TICKS_KEPT = 288;
  */
 export function appendTick(ticks: Ticks | undefined, t: number, prices: Record<string, number>, keep = TICKS_KEPT): Ticks {
   const prev = ticks ?? { t: [], px: {} };
-  const out: Ticks = { t: [...prev.t, t].slice(-keep), px: {} };
+  const out: Ticks = { t: [...prev.t, t].slice(-keep), px: {}, seen: { ...(prev.seen ?? {}) } };
+  for (const [coin, p] of Object.entries(prices)) if (p > 0) out.seen![coin] = t;
   const coins = new Set([...Object.keys(prev.px), ...Object.keys(prices)]);
   for (const coin of coins) {
     const old = prev.px[coin] ?? [];
@@ -79,6 +88,30 @@ export function appendTick(ticks: Ticks | undefined, t: number, prices: Record<s
 
 export function seriesOf(ticks: Ticks | undefined, coin: string): number[] {
   return ticks?.px[coin] ?? [];
+}
+
+/**
+ * The series a strategy may trade on at `now`: only the unbroken run of
+ * samples since the last gap (so an hour-long outage isn't read as a
+ * 5-minute move), and nothing at all when the coin's price is stale — no
+ * real price within `maxGap`, or no sample that recent.
+ */
+export function tradingSeries(ticks: Ticks | undefined, coin: string, now: number, maxGap = MAX_GAP_MS): number[] {
+  const px = ticks?.px[coin];
+  if (!ticks || !px?.length) return [];
+  const t = ticks.t;
+  const seen = ticks.seen?.[coin];
+  if (seen !== undefined && now - seen > maxGap) return [];
+  if (!t.length || now - t[t.length - 1]! > maxGap) return [];
+  let run = 1;
+  while (run < t.length && t[t.length - run]! - t[t.length - run - 1]! <= maxGap) run++;
+  return px.slice(-Math.min(run, px.length));
+}
+
+/** Whether `coin` has a real price within `maxGap` of `now`. */
+export function priceFresh(ticks: Ticks | undefined, coin: string, now: number, maxGap = MAX_GAP_MS): boolean {
+  const seen = ticks?.seen?.[coin];
+  return seen !== undefined ? now - seen <= maxGap : false;
 }
 
 /** A compact read of one coin for the King and the villagers' council. */

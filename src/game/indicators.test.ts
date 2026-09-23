@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendTick, change, priorRange, rsi, seriesOf, sma, volatility } from "./indicators.ts";
+import { appendTick, change, priceFresh, priorRange, rsi, seriesOf, sma, tradingSeries, volatility } from "./indicators.ts";
 
 describe("indicators", () => {
   const up = [100, 101, 102, 103, 104, 105];
@@ -47,5 +47,28 @@ describe("the tick history", () => {
     assert.deepEqual(seriesOf(t, "ETH"), [10, 11, 12]); // tick 2 repeated 10
     assert.deepEqual(seriesOf(t, "SOL"), [5, 6]); // starts when first priced
     assert.deepEqual(seriesOf(t, "DOGE"), []);
+  });
+});
+
+describe("trading on clean data", () => {
+  const M = 60_000;
+  it("reads only the unbroken run since the last gap", () => {
+    let t = appendTick(undefined, 0, { SOL: 1 });
+    t = appendTick(t, 5 * M, { SOL: 2 });
+    t = appendTick(t, 125 * M, { SOL: 3 }); // two hours of silence
+    t = appendTick(t, 130 * M, { SOL: 4 });
+    assert.deepEqual(seriesOf(t, "SOL"), [1, 2, 3, 4]);
+    assert.deepEqual(tradingSeries(t, "SOL", 131 * M), [3, 4]);
+  });
+
+  it("gives nothing when the ticks or the coin's price have gone stale", () => {
+    let t = appendTick(undefined, 0, { SOL: 1, ETH: 5 });
+    t = appendTick(t, 5 * M, { SOL: 2 });
+    t = appendTick(t, 10 * M, { SOL: 3 });
+    t = appendTick(t, 15 * M, { SOL: 4 });
+    assert.deepEqual(tradingSeries(t, "ETH", 16 * M), [], "ETH's last real price was 16 minutes ago");
+    assert.equal(priceFresh(t, "ETH", 16 * M), false);
+    assert.equal(priceFresh(t, "SOL", 16 * M), true);
+    assert.deepEqual(tradingSeries(t, "SOL", 40 * M), [], "no tick for 25 minutes");
   });
 });

@@ -132,7 +132,8 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
   const crownChanged =
     world.king.balance !== prev.king.balance ||
     world.taxRate !== prev.taxRate ||
-    world.king.favorAsset !== prev.king.favorAsset;
+    world.king.favorAsset !== prev.king.favorAsset ||
+    world.halt?.at !== prev.halt?.at;
   if (
     !arrivals.length &&
     kept.length === prev.subjects.length &&
@@ -160,6 +161,9 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     lastTickAt: world.lastTickAt,
     trades: world.trades,
     desk: world.desk,
+    halt: world.halt,
+    risk: world.risk,
+    ledger: world.ledger,
     council: world.council,
     tape: world.tape,
     brain: world.brain,

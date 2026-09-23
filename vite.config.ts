@@ -175,6 +175,25 @@ export default defineConfig(({ command, isPreview }) => ({
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
             serverDir: "./server",
+            // Security headers on every response, as a Vercel route that sets them and
+            // carries on routing (`continue`). No X-Frame-Options/frame-ancestors: the
+            // app is shown inside the builder's preview frame.
+            vercel: {
+              config: {
+                routes: [
+                  {
+                    src: "/(.*)",
+                    headers: {
+                      "x-content-type-options": "nosniff",
+                      "referrer-policy": "strict-origin-when-cross-origin",
+                      "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+                      "strict-transport-security": "max-age=63072000; includeSubDomains",
+                    },
+                    continue: true,
+                  },
+                ],
+              },
+            },
           }),
         ]
       : []),

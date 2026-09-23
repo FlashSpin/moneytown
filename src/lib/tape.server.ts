@@ -11,6 +11,7 @@
  * Coins a villager still holds are priced even after they leave the list.
  */
 import type { Tape } from "@/game/types";
+import { disabledSources } from "./tape-sources";
 import {
   krakenGbpKey,
   parseGeckoMarkets,
@@ -163,7 +164,14 @@ export async function loadTape(held: string[] = []): Promise<Tape> {
 }
 
 async function fetchTapeUncached(held: string[]): Promise<Tape> {
-  const [pairs, gecko, fng, trending] = await Promise.all([krakenPairs(), geckoMarkets(), fearGreed(), trendingCoins()]);
+  // An operator can switch off a misbehaving source (DISABLE_SOURCES); the rest carry on.
+  const off = disabledSources();
+  const [pairs, gecko, fng, trending] = await Promise.all([
+    off.has("kraken") ? null : krakenPairs(),
+    off.has("coingecko") ? { coins: [], fresh: false } : geckoMarkets(),
+    off.has("feargreed") ? null : fearGreed(),
+    off.has("trending") || off.has("coingecko") ? [] : trendingCoins(),
+  ]);
   const markets = gecko.coins;
   const scan = pickTopCoins(markets, pairs?.usd ?? null, SCAN_SIZE);
   const coins = scan.slice(0, MARKET_SIZE);
@@ -172,7 +180,7 @@ async function fetchTapeUncached(held: string[]): Promise<Tape> {
   const keys = wanted.map((c) => pairs?.usd.get(c)?.key).filter((k): k is string => Boolean(k));
   const [ticker, cbGbp] = await Promise.all([
     krakenTicker(pairs?.gbpKey ? [...keys, pairs.gbpKey] : keys),
-    coinbaseGbp(),
+    off.has("coinbase") ? null : coinbaseGbp(),
   ]);
   const bySymbol = new Map(markets.map((m) => [m.symbol, m]));
 

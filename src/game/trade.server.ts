@@ -104,6 +104,7 @@ export function tradeParish(
   const universe = tradableCoins(tape);
   const hot = new Set(tape.trending ?? []);
   let skipped = 0;
+  const paused = new Set(state.decree?.paused ?? []);
   const notes: { kind: "subject" | "tape"; text: string }[] = [];
   const stake = stakeSats(tape);
   const rng = mulberry32(state.seed + Math.floor(now / 60_000));
@@ -145,7 +146,16 @@ export function tradeParish(
     const step = own?.events.length
       ? { trader: own.trader, fills: own.events }
       : (() => {
-          const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, counted, exec);
+          // A strategy the seal-bearer paused opens nothing (its open trades are still managed).
+          let noted = false;
+          const kindGate: Gate = paused.has(strategy.kind)
+            ? () => {
+                if (!noted) book.block("strategy paused");
+                noted = true;
+                return "strategy paused";
+              }
+            : counted;
+          const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, kindGate, exec);
           if (r.rejected) book.block(r.rejected);
           return { trader: r.trader, fills: r.event ? [r.event] : [] };
         })();

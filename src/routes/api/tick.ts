@@ -9,12 +9,8 @@ import { createFileRoute } from "@tanstack/react-router";
  * NOT protect a plain API route, so auth has to happen here, in the handler.
  */
 async function tick(request: Request): Promise<Response> {
-  const { env } = await import("@/lib/env.server");
-  const secret = env("CRON_SECRET");
-  const auth = request.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  const { bearerOk } = await import("@/lib/seal.server");
+  if (!bearerOk(request)) return new Response("Unauthorized", { status: 401 });
 
   const { loadWorldRow, saveNewDay } = await import("@/lib/world.server");
   const { runDailyTick } = await import("@/game/tick.server");

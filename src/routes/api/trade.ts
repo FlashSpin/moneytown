@@ -13,11 +13,8 @@ import { createFileRoute } from "@tanstack/react-router";
 const MIN_GAP_MS = 3 * 60_000;
 
 async function trade(request: Request): Promise<Response> {
-  const { env } = await import("@/lib/env.server");
-  const secret = env("CRON_SECRET");
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  const { bearerOk } = await import("@/lib/seal.server");
+  if (!bearerOk(request)) return new Response("Unauthorized", { status: 401 });
   const { requestIdOf } = await import("@/lib/log.server");
   const { runTradeOnce } = await import("@/lib/trade-run.server");
   const requestId = requestIdOf(request);

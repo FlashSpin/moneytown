@@ -5,6 +5,7 @@
  */
 import { TAX_MAX, TAX_MIN } from "./constants.ts";
 import type { Asset } from "./dawn.ts";
+import { STRATEGY_KINDS, type StrategyKind } from "./strategies.ts";
 
 /** A proposed change: a new value, "auto" (hand the choice back to the King's AI at dawn), or no change. */
 export type DecreeChange<T> = T | "auto" | null;
@@ -19,7 +20,17 @@ export type Command = {
   strategies: { name: string; raw: Record<string, unknown> }[];
   /** Stop all new trading (true), resume it (false), or no change (null). */
   halt: boolean | null;
+  /** Strategies to pause (none of their trades open) and to let trade again. */
+  pause: StrategyKind[];
+  resume: StrategyKind[];
 };
+
+/** Strategy kinds named in `v` (a list or one name); unknown names are dropped. */
+export function parseKinds(v: unknown): StrategyKind[] {
+  const list = Array.isArray(v) ? v : typeof v === "string" && v.trim() ? v.split(/[,\s]+/) : [];
+  const out = list.map((x) => String(x).trim().toLowerCase()).filter((x): x is StrategyKind => STRATEGY_KINDS.includes(x as StrategyKind));
+  return [...new Set(out)];
+}
 
 /** "halt" / "resume" (or true/false) → a halt command; anything else is no change. */
 export function parseHalt(v: unknown): boolean | null {
@@ -31,7 +42,7 @@ export function parseHalt(v: unknown): boolean | null {
 }
 
 /** Standing royal orders the daily tick honours instead of the King's AI. */
-export type Decree = { taxRate?: number; favorAsset?: Asset };
+export type Decree = { taxRate?: number; favorAsset?: Asset; paused?: StrategyKind[] };
 
 export function parseTaxPercent(v: unknown): DecreeChange<number> {
   if (v == null || v === "") return null;
@@ -53,7 +64,17 @@ export function parseFavor(v: unknown, coins: Asset[]): DecreeChange<Asset> {
 
 /** The AI's raw JSON → a command. Unknown or malformed fields mean "no change". */
 export function parseCommand(
-  obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown; strategies?: unknown; halt?: unknown; trading?: unknown },
+  obj: {
+    summon?: unknown;
+    banish?: unknown;
+    taxRate?: unknown;
+    favorAsset?: unknown;
+    strategies?: unknown;
+    halt?: unknown;
+    trading?: unknown;
+    pause?: unknown;
+    resume?: unknown;
+  },
   coins: Asset[],
 ): Command {
   const summon = Number(obj.summon);
@@ -75,6 +96,8 @@ export function parseCommand(
           .slice(0, 24)
       : [],
     halt: parseHalt(obj.halt ?? obj.trading),
+    pause: parseKinds(obj.pause),
+    resume: parseKinds(obj.resume),
   };
 }
 
@@ -91,5 +114,13 @@ export function resolveBanish<T extends { id: string; firstName: string }>(livin
 
 /** Whether a command asks for anything only the seal-bearer may order. */
 export function needsSeal(c: Command): boolean {
-  return c.banish.length > 0 || c.taxRate !== null || c.favorAsset !== null || c.strategies.length > 0 || c.halt !== null;
+  return (
+    c.banish.length > 0 ||
+    c.taxRate !== null ||
+    c.favorAsset !== null ||
+    c.strategies.length > 0 ||
+    c.halt !== null ||
+    c.pause.length > 0 ||
+    c.resume.length > 0
+  );
 }

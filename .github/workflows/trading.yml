@@ -3,7 +3,9 @@
 # look again (every 5-60 minutes), the trading desk lets them place their own
 # trades with the free AI — which can take a minute, hence the long timeout. Free on GitHub Actions for public repositories.
 # Uses the same CRON_SECRET repository secret as the King's review.
-# GitHub may delay or skip scheduled runs when it is busy; the game copes.
+# GitHub may delay or skip scheduled runs when it is busy (the 5-minute
+# schedule often doesn't fire at all), so open pages also keep it going
+# (/api/heartbeat) and an external cron is recommended: docs/operations.md.
 name: Villagers trade
 
 on:
@@ -35,4 +37,5 @@ jobs:
           fi
           curl --fail-with-body --silent --show-error --max-time 150 \
             -H "Authorization: Bearer $CRON_SECRET" \
+            -H "x-source: github" \
             "$SITE_URL/api/trade$FORCE"

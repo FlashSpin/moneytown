@@ -25,13 +25,19 @@ async function run(request: Request): Promise<Response> {
   const row = await loadWorldRow();
   const coins = scanCoins(row.state.tape).slice(0, count);
   const stake = stakeSats(row.state.tape);
+  const { recordRun } = await import("@/lib/jobs.server");
+  const { requestIdOf } = await import("@/lib/log.server");
+  const requestId = requestIdOf(request);
   try {
-    const saved = await runAndSaveBacktest({
+    const saved = await recordRun("backtest", { requestId, source: "cron" }, async () => {
+      const run = await runAndSaveBacktest({
       days,
       coins,
       balance: stake,
       stakeSats: stake,
-      backfill: url.searchParams.get("backfill") !== "0",
+        backfill: url.searchParams.get("backfill") !== "0",
+      });
+      return { outcome: "ok", summary: { id: run.id, bars: run.data.bars, coins: run.data.coins.length }, result: run };
     });
     return Response.json({
       ok: true,

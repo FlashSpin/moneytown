@@ -155,6 +155,12 @@ export function StatusCard() {
       {blocked.length ? (
         <p className="card-note">Stopped at the last check: {blocked.map(([why, n]) => `${n} × ${why}`).join(", ")}.</p>
       ) : null}
+      <p className="card-note">
+        <a href="/api/health?soft=1" target="_blank" rel="noreferrer">
+          Full health report
+        </a>{" "}
+        — job runs, failures and timings over the last day.
+      </p>
       {tape.trending?.length ? (
         <p className="card-note">
           Crowd is watching {tape.trending.slice(0, 6).join(", ")} · fear &amp; greed {tape.fearGreed} ({tape.fearGreedLabel}).

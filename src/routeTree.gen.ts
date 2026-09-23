@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BacktestRouteImport } from './routes/backtest'
 import { Route as ApiBacktestRouteImport } from './routes/api/backtest'
+import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiHeartbeatRouteImport } from './routes/api/heartbeat'
 import { Route as ApiLedgerRouteImport } from './routes/api/ledger'
 import { Route as ApiReviewRouteImport } from './routes/api/review'
 import { Route as ApiTickRouteImport } from './routes/api/tick'
@@ -30,6 +32,16 @@ const BacktestRoute = BacktestRouteImport.update({
 const ApiBacktestRoute = ApiBacktestRouteImport.update({
   id: '/api/backtest',
   path: '/api/backtest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHeartbeatRoute = ApiHeartbeatRouteImport.update({
+  id: '/api/heartbeat',
+  path: '/api/heartbeat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiLedgerRoute = ApiLedgerRouteImport.update({
@@ -57,6 +69,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/backtest': typeof BacktestRoute
   '/api/backtest': typeof ApiBacktestRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/heartbeat': typeof ApiHeartbeatRoute
   '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
@@ -66,6 +80,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/backtest': typeof BacktestRoute
   '/api/backtest': typeof ApiBacktestRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/heartbeat': typeof ApiHeartbeatRoute
   '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
@@ -76,6 +92,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/backtest': typeof BacktestRoute
   '/api/backtest': typeof ApiBacktestRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/heartbeat': typeof ApiHeartbeatRoute
   '/api/ledger': typeof ApiLedgerRoute
   '/api/review': typeof ApiReviewRoute
   '/api/tick': typeof ApiTickRoute
@@ -87,6 +105,8 @@ export interface FileRouteTypes {
     | '/'
     | '/backtest'
     | '/api/backtest'
+    | '/api/health'
+    | '/api/heartbeat'
     | '/api/ledger'
     | '/api/review'
     | '/api/tick'
@@ -96,6 +116,8 @@ export interface FileRouteTypes {
     | '/'
     | '/backtest'
     | '/api/backtest'
+    | '/api/health'
+    | '/api/heartbeat'
     | '/api/ledger'
     | '/api/review'
     | '/api/tick'
@@ -105,6 +127,8 @@ export interface FileRouteTypes {
     | '/'
     | '/backtest'
     | '/api/backtest'
+    | '/api/health'
+    | '/api/heartbeat'
     | '/api/ledger'
     | '/api/review'
     | '/api/tick'
@@ -115,6 +139,8 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BacktestRoute: typeof BacktestRoute
   ApiBacktestRoute: typeof ApiBacktestRoute
+  ApiHealthRoute: typeof ApiHealthRoute
+  ApiHeartbeatRoute: typeof ApiHeartbeatRoute
   ApiLedgerRoute: typeof ApiLedgerRoute
   ApiReviewRoute: typeof ApiReviewRoute
   ApiTickRoute: typeof ApiTickRoute
@@ -142,6 +168,20 @@ declare module '@tanstack/react-router' {
       path: '/api/backtest'
       fullPath: '/api/backtest'
       preLoaderRoute: typeof ApiBacktestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/heartbeat': {
+      id: '/api/heartbeat'
+      path: '/api/heartbeat'
+      fullPath: '/api/heartbeat'
+      preLoaderRoute: typeof ApiHeartbeatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/ledger': {
@@ -179,6 +219,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BacktestRoute: BacktestRoute,
   ApiBacktestRoute: ApiBacktestRoute,
+  ApiHealthRoute: ApiHealthRoute,
+  ApiHeartbeatRoute: ApiHeartbeatRoute,
   ApiLedgerRoute: ApiLedgerRoute,
   ApiReviewRoute: ApiReviewRoute,
   ApiTickRoute: ApiTickRoute,

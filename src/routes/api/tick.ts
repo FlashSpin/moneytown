@@ -18,35 +18,44 @@ async function tick(request: Request): Promise<Response> {
 
   const { loadWorldRow, saveNewDay } = await import("@/lib/world.server");
   const { runDailyTick } = await import("@/game/tick.server");
-
-  let row = await loadWorldRow();
-  const fromDay = row.day;
-  const hoursSinceUpdate = (Date.now() - new Date(row.updated_at).getTime()) / 3_600_000;
+  const { recordRun } = await import("@/lib/jobs.server");
+  const { log, requestIdOf } = await import("@/lib/log.server");
+  const requestId = requestIdOf(request);
   const forced = new URL(request.url).searchParams.get("force") === "1";
-  if (hoursSinceUpdate < 20 && !forced) {
-    // Guards against a double-invocation (retry, duplicate cron registration,
-    // accidental manual call) advancing the world twice inside one real day.
-    // `?force=1` (still behind the same secret) bypasses this for testing.
-    return Response.json({ ok: true, skipped: true, day: row.day });
-  }
 
-  // The new day saves only if the row is unchanged and still on `fromDay`, so
-  // two overlapping calls can't both advance it. A trade tick or petition
-  // landing meanwhile just means dawn is re-run on the fresh row.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) {
-      row = await loadWorldRow();
-      if (row.day !== fromDay) return Response.json({ ok: true, skipped: true, day: row.day });
+  const result = await recordRun<{ status: number; body: Record<string, unknown> }>("dawn", { requestId, source: "cron" }, async () => {
+    let row = await loadWorldRow();
+    const fromDay = row.day;
+    const hoursSinceUpdate = (Date.now() - new Date(row.updated_at).getTime()) / 3_600_000;
+    if (hoursSinceUpdate < 20 && !forced) {
+      // Guards against a double-invocation (retry, duplicate cron registration,
+      // accidental manual call) advancing the world twice inside one real day.
+      // `?force=1` (still behind the same secret) bypasses this for testing.
+      return { outcome: "skipped", result: { status: 200, body: { ok: true, skipped: true, day: row.day } } };
     }
-    const next = await runDailyTick(row.state);
-    if (await saveNewDay(next, row.rev)) {
-      // Once a day, drop price history past its retention.
-      const { pruneHistory } = await import("@/lib/history.server");
-      await pruneHistory().catch((e: unknown) => console.warn("[tick] history not pruned:", e));
-      return Response.json({ ok: true, day: next.day });
+    // The new day saves only if the row is unchanged and still on `fromDay`, so
+    // two overlapping calls can't both advance it. A trade tick or petition
+    // landing meanwhile just means dawn is re-run on the fresh row.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        row = await loadWorldRow();
+        if (row.day !== fromDay) return { outcome: "skipped", result: { status: 200, body: { ok: true, skipped: true, day: row.day } } };
+      }
+      const next = await runDailyTick(row.state);
+      if (await saveNewDay(next, row.rev)) {
+        // Once a day, drop price history and job runs past their retention.
+        const { pruneHistory } = await import("@/lib/history.server");
+        const { pruneJobRuns } = await import("@/lib/jobs.server");
+        await Promise.all([pruneHistory(), pruneJobRuns()]).catch((e: unknown) =>
+          log("warn", "dawn.prune_failed", { requestId, error: e instanceof Error ? e.message : String(e) }),
+        );
+        const living = next.subjects.filter((s) => s.state !== "condemned" && s.state !== "hanging").length;
+        return { outcome: "ok", summary: { day: next.day, living, attempts: attempt + 1 }, result: { status: 200, body: { ok: true, day: next.day } } };
+      }
     }
-  }
-  return Response.json({ ok: false, error: "world kept changing; try again" }, { status: 409 });
+    throw new Error("world kept changing; try again");
+  }).catch((e: unknown) => ({ status: 409, body: { ok: false, error: e instanceof Error ? e.message : "failed" } }));
+  return Response.json({ ...result.body, requestId }, { status: result.status, headers: { "x-request-id": requestId } });
 }
 
 export const Route = createFileRoute("/api/tick")({

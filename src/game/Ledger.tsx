@@ -5,6 +5,8 @@ import { stallCoins } from "./dawn";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
 import { CouncilPanel } from "./CouncilPanel";
+import { RollPosition, TradeCard, TradingFloor } from "./TradingViews";
+import type { Position, Strategy } from "./strategies";
 import { TEMPER_DESCRIPTIONS, temperOf, type Temper } from "./trading";
 import type { Tape } from "./types";
 import { formatPurse } from "./wallets";
@@ -27,6 +29,9 @@ type WalletTarget = {
   temper?: Temper;
   followsKing?: boolean;
   record?: { wins: number; losses: number; pnl: number };
+  strategy?: Strategy;
+  position?: Position;
+  trades?: number;
   favorAsset?: Asset;
 };
 
@@ -40,20 +45,13 @@ function PositionLine({ target, tape }: { target: WalletTarget; tape: Tape }) {
     );
   }
   const today = target.today ?? 0;
-  const todayLine = (
-    <span className={today >= 0 ? "tape-up" : "tape-down"}>
-      {" "}
-      · today {today >= 0 ? "+" : "-"}
-      {formatPurse(Math.abs(today), tape)}
-    </span>
-  );
-  if (!target.side || target.side === "flat") {
-    return <p className="hint">Flat — no position, no risk.{todayLine}</p>;
-  }
   return (
-    <p>
-      {target.side.toUpperCase()} {target.asset ?? "BTC"} with {Math.round((target.size ?? 0.4) * 100)}% of the purse
-      {todayLine}
+    <p className="hint">
+      Banked today (closed trades, after fees):{" "}
+      <span className={today >= 0 ? "tape-up" : "tape-down"}>
+        {today >= 0 ? "+" : "-"}
+        {formatPurse(Math.abs(today), tape)}
+      </span>
     </p>
   );
 }
@@ -100,6 +98,9 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
       <p className="stat-num">{formatPurse(target.balance, tape)}</p>
       <PositionLine target={target} tape={tape} />
       {!target.king ? (
+        <TradeCard name={target.title} strategy={target.strategy} position={target.position} trades={target.trades} />
+      ) : null}
+      {!target.king ? (
         <p className="hint">
           {target.title} is {TEMPER_DESCRIPTIONS[target.temper ?? temperOf(target.id)]}.
           {target.record && target.record.wins + target.record.losses > 0
@@ -118,8 +119,8 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
       {!target.king && target.advice ? <p className="king-order">The King advised: “{target.advice}”</p> : null}
       <p className="hint">
         {target.king
-          ? "Sets the tax on profits and the favoured market each dawn, and orders every villager's trades."
-          : `Decides its own trades at real prices, after hearing the King and debating at the parish council. Below £${HANG_BELOW_GBP} it hangs.`}
+          ? "Sets the tax on profits and the favoured coin each dawn, and advises every villager's strategy."
+          : `Trades by its own strategy every 5 minutes at real prices; the strategy is chosen at the parish council. Below £${HANG_BELOW_GBP} it hangs.`}
       </p>
       <p className="wallet-addr">{target.wallet}</p>
       <p className="hint">Placeholder address — no key behind it, never real bitcoin.</p>
@@ -177,8 +178,9 @@ export function Ledger() {
       <p className="hint">
         Each soul trades the top 20 coins on the Kraken exchange at real, live prices — paper only, no
         real money; each coin has its own stall. The
-        King advises every few hours; the villagers debate strategy at their council and each decides
-        its own trade. At dawn he taxes the day&apos;s profits.
+        villagers are day-trading bots: every 5 minutes each one&apos;s own strategy trades on its
+        signals. The King advises and the villagers choose their strategies at a council every few
+        hours. At dawn he taxes the day&apos;s banked profits.
       </p>
 
       <section className="tithe-row">
@@ -203,11 +205,7 @@ export function Ledger() {
                 <button type="button" className="roll-hit" onClick={() => select(sub.id)}>
                   <span className="roll-name">
                     <span>{sub.firstName}</span>
-                    <span className="roll-position">
-                      {sub.side && sub.side !== "flat"
-                        ? `${sub.side.toUpperCase()} ${sub.asset ?? "BTC"} · ${Math.round((sub.size ?? 0.4) * 100)}%`
-                        : "FLAT"}
-                    </span>
+                    <RollPosition strategy={sub.strategy} position={sub.position} />
                   </span>
                   <span className="roll-figures">
                     <span className="roll-money">{formatPurse(sub.balance, tape)}</span>
@@ -244,6 +242,9 @@ export function Ledger() {
             temper: selected.temper,
             followsKing: selected.followsKing,
             record: selected.record,
+            strategy: selected.strategy,
+            position: selected.position,
+            trades: selected.trades,
           }}
         />
       ) : selectedId === "king" ? (
@@ -254,6 +255,8 @@ export function Ledger() {
           <p className="hint">Click a name to inspect its wallet and position.</p>
         </section>
       )}
+
+      <TradingFloor />
 
       <CouncilPanel />
 

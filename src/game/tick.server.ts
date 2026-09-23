@@ -14,7 +14,10 @@ import { loadTape } from "@/lib/tape.server";
 import { HANG_BELOW_GBP, LIVING_CAP } from "./constants";
 import { defaultKingPolicy, kingSpawnCount } from "./economy";
 import { kingFlavor } from "./brains";
-import { appendHistory, councilAndOrders, isLiving, markParish, wealthLine } from "./review.server";
+import { priceOf } from "./dawn";
+import { councilStrategies, isLiving, wealthLine } from "./review.server";
+import { unrealized } from "./strategies";
+import { coinsNeeded } from "./trade.server";
 import { settleDay } from "./trading";
 import { GALLOWS_DROP } from "./town";
 import type { GameState, King, Subject } from "./types";
@@ -24,7 +27,7 @@ import { formatGbp, gbpToSats, mulberry32, rentSats, satsToGbp, stakeSats, tapeG
 export async function runDailyTick(prev: GameState): Promise<GameState> {
   let tape = prev.tape;
   try {
-    tape = await loadTape(prev.subjects.map((s) => s.asset ?? ""));
+    tape = await loadTape(coinsNeeded(prev));
   } catch {
     tape = { ...prev.tape, dark: true, source: "dark" };
   }
@@ -43,9 +46,10 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   // Anyone condemned yesterday has had their day to be seen and is struck
   // from the ledger now (the client still plays one hang animation first).
   for (const s of prev.subjects.filter((x) => !isLiving(x))) push("death", `${s.firstName}'s name is struck from the ledger.`);
-  const marked = markParish(prev.subjects.filter(isLiving), tape);
+  const marked = prev.subjects.filter(isLiving);
 
-  // Settle the day that just ended, at the tax rate that ruled it.
+  // Settle the day that just ended, at the tax rate that ruled it. Only banked
+  // (closed-trade) profit is taxed; open trades carry into the new day.
   push("dawn", `Dawn of day ${day}. The King takes ${Math.round(prev.taxRate * 100)}% of yesterday's profits.`);
   const rent = rentSats(tape);
   const floor = gbpToSats(HANG_BELOW_GBP, tapeGbp(tape));
@@ -60,25 +64,29 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
       floor,
     });
     kingBalance += dues.tithe + dues.rentPaid;
+    // The gallows judge the whole purse, open trade included at today's price.
+    const open = sub.position ? unrealized(sub.position, priceOf(tape, sub.position.coin)) : 0;
+    const hanged = dues.balance + open < floor;
     const sign = dues.profit >= 0 ? "+" : "-";
     push(
       "subject",
       `${sub.firstName}: ${sign}${gbp(Math.abs(dues.profit))} on the day; tax ${gbp(dues.tithe)}, upkeep ${gbp(dues.rentPaid)}.`,
     );
-    if (dues.hanged) {
-      kingBalance += dues.balance;
+    if (hanged) {
+      kingBalance += Math.max(0, dues.balance + open);
       push("death", `${sub.firstName}'s purse has fallen below £${HANG_BELOW_GBP}. They are walked to the gallows.`);
       settled.push({
         ...sub,
         balance: 0,
         side: "flat",
+        position: undefined,
         destX: GALLOWS_DROP.x,
         destY: GALLOWS_DROP.y,
         state: "condemned",
         hangT: 0,
       });
     } else {
-      settled.push({ ...sub, balance: dues.balance, dayStart: dues.balance });
+      settled.push({ ...sub, balance: dues.balance, dayStart: dues.balance, trades: 0 });
     }
   }
 
@@ -100,10 +108,9 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     push("crown", `The King opens ${child.firstName} from the treasury, staked for trade.`);
   }
 
-  // The King's council for the new day.
-  const history = appendHistory(prev.priceHistory, tape, now);
+  // The strategy council for the new day.
   const opening: GameState = { ...prev, day, tape, king: { ...prev.king, balance: kingBalance } };
-  const review = await councilAndOrders(opening, settled, tape, { dawn: true, rng, history, now });
+  const review = await councilStrategies(opening, settled, tape, { dawn: true, rng, now });
   const council = review.council;
   const brain = review.parish?.brain ?? council?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" };
 
@@ -135,24 +142,23 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
     seed: prev.seed + 17,
     brain,
     speech: review.speech,
+    speechAt: now,
     council: review.record,
     lastReviewAt: now,
-    priceHistory: history,
   });
 }
 
 /**
- * A review between dawns: re-mark every position at the live price and take
- * the King's new orders. No dues are charged — those are settled at dawn.
+ * A strategy review between dawns: the King advises and the villagers choose
+ * their strategies again. No dues are charged — those are settled at dawn —
+ * and no trades are made here; the 5-minute tick trades the new strategies.
  */
 export async function runReview(prev: GameState): Promise<GameState> {
-  let tape = await loadTape(prev.subjects.map((s) => s.asset ?? "")).catch(() => ({ ...prev.tape, dark: true, source: "dark" }));
+  let tape = await loadTape(coinsNeeded(prev)).catch(() => ({ ...prev.tape, dark: true, source: "dark" }));
   if (tape.dark && !tape.coins) tape = { ...tape, coins: prev.tape.coins };
   const now = Date.now();
   const rng = mulberry32(prev.seed + Math.floor(now / 60_000));
-  const history = appendHistory(prev.priceHistory, tape, now);
-  const marked = markParish(prev.subjects, tape);
-  const review = await councilAndOrders({ ...prev, tape }, marked, tape, { dawn: false, rng, history, now });
+  const review = await councilStrategies({ ...prev, tape }, prev.subjects, tape, { dawn: false, rng, now });
 
   let log = prev.log;
   const push = (kind: Parameters<typeof pushLog>[1], text: string) => {
@@ -169,8 +175,8 @@ export async function runReview(prev: GameState): Promise<GameState> {
     log,
     brain: review.parish?.brain ?? review.council?.brain ?? prev.brain,
     speech: review.speech,
+    speechAt: now,
     council: review.record,
     lastReviewAt: now,
-    priceHistory: history,
   });
 }

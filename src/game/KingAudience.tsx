@@ -5,7 +5,7 @@ import { useGame } from "./store";
 
 const COMMON_ASKS = [
   "How fare the villagers?",
-  "What is thy trading strategy today?",
+  "What strategies are the villagers running?",
   "Your Majesty, summon a new villager!",
 ];
 
@@ -14,6 +14,7 @@ const SOVEREIGN_ASKS = [
   "Banish the poorest soul.",
   "Set the tax to 10%.",
   "Favour ETH in the markets.",
+  "Give the weakest trader a cautious scalping strategy on BTC.",
   "Summon five more traders.",
 ];
 

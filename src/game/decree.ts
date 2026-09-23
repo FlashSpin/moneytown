@@ -15,6 +15,8 @@ export type Command = {
   /** Tax as a fraction 0..TAX_MAX. */
   taxRate: DecreeChange<number>;
   favorAsset: DecreeChange<Asset>;
+  /** New strategies for named villagers (raw; tidied against the market when applied). */
+  strategies: { name: string; raw: Record<string, unknown> }[];
 };
 
 /** Standing royal orders the daily tick honours instead of the King's AI. */
@@ -40,7 +42,7 @@ export function parseFavor(v: unknown, coins: Asset[]): DecreeChange<Asset> {
 
 /** The AI's raw JSON → a command. Unknown or malformed fields mean "no change". */
 export function parseCommand(
-  obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown },
+  obj: { summon?: unknown; banish?: unknown; taxRate?: unknown; favorAsset?: unknown; strategies?: unknown },
   coins: Asset[],
 ): Command {
   const summon = Number(obj.summon);
@@ -54,6 +56,13 @@ export function parseCommand(
     banish,
     taxRate: parseTaxPercent(obj.taxRate),
     favorAsset: parseFavor(obj.favorAsset, coins),
+    strategies: Array.isArray(obj.strategies)
+      ? obj.strategies
+          .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
+          .map((x) => ({ name: String(x.name ?? x.id ?? "").trim(), raw: x }))
+          .filter((x) => x.name)
+          .slice(0, 24)
+      : [],
   };
 }
 
@@ -70,5 +79,5 @@ export function resolveBanish<T extends { id: string; firstName: string }>(livin
 
 /** Whether a command asks for anything only the seal-bearer may order. */
 export function needsSeal(c: Command): boolean {
-  return c.banish.length > 0 || c.taxRate !== null || c.favorAsset !== null;
+  return c.banish.length > 0 || c.taxRate !== null || c.favorAsset !== null || c.strategies.length > 0;
 }

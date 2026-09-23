@@ -28,4 +28,5 @@ jobs:
           fi
           curl --fail-with-body --silent --show-error --max-time 120 \
             -H "Authorization: Bearer $CRON_SECRET" \
+            -H "x-source: github" \
             "$SITE_URL/api/review"

@@ -56,8 +56,9 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   const brain = kingCounsel?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" };
   push("system", kingCounsel ? `The King's agent this dawn: ${brain.label}.` : "No agent answered the King. The old heuristic speaks.");
 
-  const kingFavorAsset = kingCounsel?.king.favorAsset ?? prev.king.favorAsset ?? "BTC";
-  const taxRate = kingCounsel?.king.taxRate ?? prev.taxRate;
+  // A standing royal decree (from the seal-bearer's petition) outranks the King's AI.
+  const kingFavorAsset = prev.decree?.favorAsset ?? kingCounsel?.king.favorAsset ?? prev.king.favorAsset ?? "BTC";
+  const taxRate = prev.decree?.taxRate ?? kingCounsel?.king.taxRate ?? prev.taxRate;
 
   const adviceById = new Map((kingCounsel?.subjects ?? []).map((a) => [a.id, a]));
   let extraTalks = kingCounsel?.talks ?? [];

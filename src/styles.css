@@ -573,3 +573,64 @@
 .audience-brain[data-live="no"] {
   color: var(--color-ink-soft);
 }
+
+.seal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.seal-row .text-btn,
+.seal-form .text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.76rem;
+  color: var(--color-ink-soft);
+}
+
+.seal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-crimson);
+}
+
+.seal-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.seal-form .audience-input {
+  flex: 1 1 160px;
+}
+
+.seal-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-timber);
+  color: var(--color-parchment);
+}
+
+.seal-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.seal-wrong {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--color-crimson);
+}

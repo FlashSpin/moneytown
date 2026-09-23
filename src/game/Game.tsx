@@ -24,6 +24,7 @@ export function Game() {
   useEffect(() => {
     unlockAudio();
     void loadWorld();
+    void useGame.getState().restoreSeal();
     const id = setInterval(() => void loadWorld(), WORLD_POLL_MS);
     return () => clearInterval(id);
   }, [loadWorld]);

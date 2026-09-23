@@ -174,11 +174,20 @@ export function TradingFloor() {
           <strong>Trading desk</strong>
           {desk.brain ? ` (${desk.brain.label})` : ""}: {desk.say || (desk.brain ? "the villagers hold." : "no AI answered; the strategies trade alone.")}{" "}
           <span className="floor-tick">
-            {desk.orders ? `${desk.orders} own ${desk.orders === 1 ? "call" : "calls"} · ` : ""}
+            {desk.orders ? `${desk.orders} own ${desk.orders === 1 ? "call" : "calls"}${desk.skipped ? `, ${desk.skipped} turned down for too thin an edge` : ""} · ` : ""}
             {desk.nextAt > Date.now() ? `next look in ${Math.max(1, Math.round((desk.nextAt - Date.now()) / 60_000))} min` : "looking again soon"}
           </span>
         </p>
       ) : null}
+      {tape.trending?.length ? (
+        <p className="desk-line">
+          <strong>Crowd is watching</strong>: {tape.trending.slice(0, 8).join(", ")} · fear &amp; greed {tape.fearGreed} ({tape.fearGreedLabel})
+        </p>
+      ) : null}
+      <p className="hint">
+        Each trade is sized by the Kelly criterion from the villager&apos;s own record and never risks more than 6% of its purse; its own calls
+        need an 8-point edge over break-even.
+      </p>
       {!trades?.length ? (
         <p className="hint">
           No trades yet. Every 5 minutes each villager&apos;s strategy scans every coin and trades the strongest signal; at the trading desk they
@@ -202,6 +211,7 @@ export function TradingFloor() {
                   {" "}
                   — {t.own ? "own call: " : ""}
                   {t.reason}
+                  {t.action === "open" && t.risk ? ` · risking ${(t.risk * 100).toFixed(1)}%` : ""}
                 </span>
               </span>
             </li>

@@ -5,12 +5,16 @@
  *   - CoinGecko's market-cap table says which of those are the top 20
  *     (and is the fallback price source),
  *   - one Kraken Ticker call prices them all, plus Bitcoin in pounds.
- * Coins a villager still holds are priced even after they leave the top 20.
+ * The town has a stall for each of the top 20; the villagers' strategies
+ * scan the top 50 (`scan`). CoinGecko's trending list says which coins the
+ * crowd is watching (`trending`), alongside the fear & greed index.
+ * Coins a villager still holds are priced even after they leave the list.
  */
 import type { Tape } from "@/game/types";
 import {
   krakenGbpKey,
   parseGeckoMarkets,
+  parseGeckoTrending,
   parseKrakenPairs,
   parseKrakenTicker,
   pickTopCoins,
@@ -20,6 +24,8 @@ import {
 
 /** How many coins the market lists — one stall each in the town. */
 export const MARKET_SIZE = 20;
+/** How many coins the villagers scan for trades — the stalls' 20 and the next 30. */
+export const SCAN_SIZE = 50;
 
 type FearPayload = { data?: { value?: string; value_classification?: string }[] };
 
@@ -78,7 +84,7 @@ async function geckoMarkets(): Promise<{ coins: MarketCoin[]; fresh: boolean }> 
   try {
     const coins = parseGeckoMarkets(
       await fetchJson(
-        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=80&page=1",
+        "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=150&page=1",
       ),
     );
     if (coins.length) {
@@ -89,6 +95,21 @@ async function geckoMarkets(): Promise<{ coins: MarketCoin[]; fresh: boolean }> 
     // fall through to the old copy
   }
   return { coins: marketsCache?.coins ?? [], fresh: false };
+}
+
+// ── Crowd attention: CoinGecko's trending searches ───────────────────────
+
+let trendingCache: { at: number; coins: string[] } | null = null;
+
+async function trendingCoins(): Promise<string[]> {
+  if (trendingCache && Date.now() - trendingCache.at < MARKETS_TTL_MS) return trendingCache.coins;
+  try {
+    const coins = parseGeckoTrending(await fetchJson("https://api.coingecko.com/api/v3/search/trending"));
+    trendingCache = { at: Date.now(), coins };
+    return coins;
+  } catch {
+    return trendingCache?.coins ?? [];
+  }
 }
 
 // ── Other sources: Bitcoin in pounds, and the fear & greed index ─────────
@@ -141,10 +162,11 @@ export async function loadTape(held: string[] = []): Promise<Tape> {
 }
 
 async function fetchTapeUncached(held: string[]): Promise<Tape> {
-  const [pairs, gecko, fng] = await Promise.all([krakenPairs(), geckoMarkets(), fearGreed()]);
+  const [pairs, gecko, fng, trending] = await Promise.all([krakenPairs(), geckoMarkets(), fearGreed(), trendingCoins()]);
   const markets = gecko.coins;
-  const coins = pickTopCoins(markets, pairs?.usd ?? null, MARKET_SIZE);
-  const wanted = [...new Set([...coins, ...held.filter(Boolean)])];
+  const scan = pickTopCoins(markets, pairs?.usd ?? null, SCAN_SIZE);
+  const coins = scan.slice(0, MARKET_SIZE);
+  const wanted = [...new Set([...scan, ...held.filter(Boolean)])];
 
   const keys = wanted.map((c) => pairs?.usd.get(c)?.key).filter((k): k is string => Boolean(k));
   const [ticker, cbGbp] = await Promise.all([
@@ -185,5 +207,7 @@ async function fetchTapeUncached(held: string[]): Promise<Tape> {
     fetchedAt: Date.now(),
     assets: dark ? { BTC: { usd: 100_000, change24h: 0 } } : assets,
     coins: dark ? undefined : coins.filter((c) => assets[c]),
+    scan: dark ? undefined : scan.filter((c) => assets[c]),
+    trending: dark ? undefined : trending,
   };
 }

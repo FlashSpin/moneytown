@@ -108,6 +108,14 @@ export function parseGeckoMarkets(body: unknown): MarketCoin[] {
     .sort((a, b) => b.marketCap - a.marketCap);
 }
 
+/** Symbols from CoinGecko's trending searches, most searched first. */
+export function parseGeckoTrending(body: unknown): string[] {
+  const rows = (body as { coins?: { item?: { symbol?: unknown } }[] } | null)?.coins;
+  if (!Array.isArray(rows)) return [];
+  const out = rows.map((r) => String(r?.item?.symbol ?? "").trim().toUpperCase()).filter(Boolean);
+  return [...new Set(out)].slice(0, 15);
+}
+
 /** Well-known large caps, in rough market-cap order — used only when the live ranking can't be fetched. */
 export const DEFAULT_COINS = [
   "BTC", "ETH", "XRP", "SOL", "DOGE", "TRX", "ADA", "LINK", "AVAX", "XLM",

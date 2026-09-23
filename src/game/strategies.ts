@@ -6,7 +6,9 @@
  * scans every coin for its entry signal and takes the strongest, weighed by
  * what it has learned about each coin (./knowledge.ts); with one it checks
  * take-profit, stop-loss, a trailing stop, the strategy's own exit signal
- * and a time limit. Each fill pays a fee, like a real exchange. The AI
+ * and a time limit. Each trade is sized by the Kelly criterion, never
+ * risking more than 6% of the purse at its stop (./risk.ts). Each fill pays
+ * a fee, like a real exchange. The AI
  * (King's advice + the villagers' council) chooses and tunes strategies a
  * few times a day, and at the trading desk each villager may also buy,
  * short or close on its own call whenever it wants (`deskStep`).
@@ -15,10 +17,10 @@ import { SIZE_DEFAULT, SIZE_MIN, SIZE_WEAK_MAX, WEAK_PURSE_SHARE } from "./const
 import type { Asset } from "./dawn.ts";
 import { change, priorRange, rsi, sma } from "./indicators.ts";
 import { avoids, coinEdge, learnTrade, type Approach, type Knowledge } from "./knowledge.ts";
+import { calibratedChance, edgeOf, FEE_RATE, kelly, riskShare, stakeForRisk, strategyRisk } from "./risk.ts";
 import type { Temper } from "./trading.ts";
 
-/** Fee per fill (open and close), as a fraction — about what a small account pays an exchange. */
-export const FEE_RATE = 0.004;
+export { FEE_RATE } from "./risk.ts";
 /** After closing, a villager waits this many ticks before trading that coin again. */
 export const COOLDOWN_TICKS = 2;
 export const TICK_MS = 5 * 60_000;
@@ -114,6 +116,8 @@ export type TradeEvent = {
   reason: string;
   /** The villager's own call at the trading desk, not its strategy's signal. */
   own?: boolean;
+  /** Opens: share of the purse it loses if the stop is hit (the Kelly sizing). */
+  risk?: number;
 };
 
 // ── Choosing and tidying strategies ──────────────────────────────────────
@@ -293,7 +297,7 @@ function closeAt(trader: Trader, pos: Position, px: number, now: number, reason:
 /** Open a position: pay the fee on the stake. */
 function openAt(
   trader: Trader,
-  open: { coin: Asset; side: "long" | "short"; stake: number; px: number; reason: string; by: Approach; own?: Position["own"] },
+  open: { coin: Asset; side: "long" | "short"; stake: number; px: number; reason: string; by: Approach; own?: Position["own"]; risk: number },
   now: number,
 ): Step {
   const fee = Math.round(open.stake * FEE_RATE);
@@ -310,6 +314,7 @@ function openAt(
       side: open.side,
       price: open.px,
       reason: open.reason,
+      risk: open.risk,
       ...(open.own ? { own: true } : {}),
     },
   };
@@ -319,7 +324,9 @@ function openAt(
  * One tick for one villager: manage the open position, or scan the market
  * for an entry. `universe` is every tradable coin; the strategy scans its
  * focus coins if it has any, else all of them, skips coins it has learned to
- * avoid, and takes the strongest signal weighed by its record on each coin.
+ * avoid, and takes the strongest signal weighed by its record on each coin
+ * and the crowd's attention (`hot`: coins trending right now). The stake is
+ * the smaller of the strategy's size and its Kelly sizing.
  * Returns the updated trader and what happened (at most one fill per tick).
  */
 export function tradeStep(
@@ -329,6 +336,7 @@ export function tradeStep(
   now: number,
   stakeSats: number,
   universe: Asset[] = [],
+  hot: ReadonlySet<Asset> = new Set(),
 ): Step {
   const st = trader.strategy;
   const pos = trader.position;
@@ -364,13 +372,20 @@ export function tradeStep(
     const sig = entrySignal(st.kind, seriesOf(coin));
     if (!sig || (sig.side === "short" && !st.shorts)) continue;
     // Coins it has done well on count for more; focus coins win ties in their listed order.
-    const score = Math.min(sig.strength, 5) * (1 + 0.5 * coinEdge(trader.knowledge, coin));
+    const score = Math.min(sig.strength, 5) * (1 + 0.5 * coinEdge(trader.knowledge, coin)) * (hot.has(coin) ? 1.15 : 1);
     if (!best || score > best.score) best = { coin, sig, px, score };
   }
   if (!best) return { trader, event: null };
-  const stake = stakeFor(trader.balance, st.sizePct, stakeSats);
+  const risk = strategyRisk(trader.knowledge, st.kind, best.coin, st.takeProfitPct, st.stopLossPct);
+  const stake = Math.min(stakeFor(trader.balance, st.sizePct, stakeSats), stakeForRisk(trader.balance, risk, st.stopLossPct));
   if (stake <= 0) return { trader, event: null };
-  return openAt(trader, { coin: best.coin, side: best.sig.side, stake, px: best.px, reason: best.sig.reason, by: st.kind }, now);
+  const atRisk = riskAt(stake, trader.balance, st.stopLossPct);
+  return openAt(trader, { coin: best.coin, side: best.sig.side, stake, px: best.px, reason: best.sig.reason, by: st.kind, risk: atRisk }, now);
+}
+
+/** Share of the purse a stake loses at the stop, fees included. */
+function riskAt(stake: number, balance: number, sl: number): number {
+  return balance > 0 ? Math.round(((stake * (sl / 100 + 2 * FEE_RATE)) / balance) * 10_000) / 10_000 : 0;
 }
 
 // ── The villager's own calls, from the trading desk ──────────────────────
@@ -378,8 +393,10 @@ export function tradeStep(
 export type DeskOrder = {
   action: "buy" | "short" | "close";
   coin?: Asset;
-  /** Share of the purse (0.05-1). */
+  /** The most of the purse to stake (0.05-1); the Kelly sizing may stake less. */
   sizePct?: number;
+  /** Its honest chance (0-1) that the trade reaches take-profit before stop-loss. */
+  chance?: number;
   tp?: number;
   sl?: number;
   hours?: number;
@@ -389,8 +406,10 @@ export type DeskOrder = {
 /**
  * Carry out a villager's own order from the trading desk, at market: close
  * its trade, or open one of its choosing (closing a different open trade
- * first — a switch is two fills). Orders it can't carry out (no price, no
- * purse, the coin it has just left) do nothing.
+ * first — a switch is two fills). A new trade goes ahead only when its
+ * chance — calibrated against how the villager's own calls have gone —
+ * beats break-even by the edge bar, and is sized by Kelly (./risk.ts).
+ * Orders it can't or shouldn't carry out do nothing and say why (`skipped`).
  */
 export function deskStep(
   trader: Trader,
@@ -398,7 +417,7 @@ export function deskStep(
   priceOf: (coin: Asset) => number,
   now: number,
   stakeSats: number,
-): { trader: Trader; events: TradeEvent[] } {
+): { trader: Trader; events: TradeEvent[]; skipped?: string } {
   const why = order.why || "its own call";
   const events: TradeEvent[] = [];
   let t = trader;
@@ -412,8 +431,14 @@ export function deskStep(
   const coin = order.coin;
   const side = order.action === "buy" ? "long" : "short";
   const px = coin ? priceOf(coin) : 0;
-  if (!coin || !(px > 0)) return { trader, events };
+  if (!coin || !(px > 0)) return { trader, events, skipped: "no price" };
   if (t.position?.coin === coin && t.position.side === side) return { trader, events };
+  const tp = clamp(order.tp ?? t.strategy.takeProfitPct, 0.5, 15);
+  const sl = clamp(order.sl ?? t.strategy.stopLossPct, 0.3, 10);
+  if (order.chance === undefined) return { trader, events, skipped: "gave no odds" };
+  const p = calibratedChance(t.knowledge, clamp(order.chance, 0, 0.99));
+  const { edge, ok } = edgeOf(p, tp, sl);
+  if (!ok) return { trader, events, skipped: `edge too thin (${edge >= 0 ? "+" : ""}${Math.round(edge * 100)} pts)` };
   if (t.position) {
     const held = t.position;
     const heldPx = priceOf(held.coin);
@@ -422,17 +447,14 @@ export function deskStep(
     t = { ...step.trader, cooldownUntil: undefined, cooldownCoin: undefined };
     events.push(step.event!);
   } else if (t.cooldownCoin === coin && (t.cooldownUntil ?? 0) > now) {
-    return { trader, events };
+    return { trader, events, skipped: "just left that coin" };
   }
-  const size = clamp(order.sizePct ?? t.strategy.sizePct, 0.05, 1);
-  const stake = stakeFor(t.balance, size, stakeSats);
+  const size = clamp(order.sizePct ?? 1, 0.05, 1);
+  const stake = Math.min(stakeFor(t.balance, size, stakeSats), stakeForRisk(t.balance, riskShare(kelly(p, tp, sl)), sl));
   if (stake <= 0) return { trader: t, events };
-  const own = {
-    tp: clamp(order.tp ?? t.strategy.takeProfitPct, 0.5, 15),
-    sl: clamp(order.sl ?? t.strategy.stopLossPct, 0.3, 10),
-    maxHoldH: clamp(order.hours ?? 12, 0.25, 48),
-  };
-  const step = openAt(t, { coin, side, stake, px, reason: why, by: "own", own }, now);
+  const own = { tp, sl, maxHoldH: clamp(order.hours ?? 12, 0.25, 48) };
+  const reason = `${why} (${Math.round(p * 100)}% chance, +${Math.round(edge * 100)} pts edge)`;
+  const step = openAt(t, { coin, side, stake, px, reason, by: "own", own, risk: riskAt(stake, t.balance, sl) }, now);
   events.push(step.event!);
   return { trader: step.trader, events };
 }

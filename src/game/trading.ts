@@ -3,22 +3,36 @@
  * test. Trading itself (positions, strategies, fills) lives in ./strategies.ts.
  */
 
-/** The day's dues: tax on today's profit (nothing on a losing day), then upkeep; below the floor hangs. */
-export function settleDay(p: { balance: number; dayStart: number; taxRate: number; rent: number; floor: number }): {
+/**
+ * The day's dues, at dawn:
+ *   1. tax: `taxRate` of the day's banked profit, after setting it against
+ *      losses carried forward from earlier losing days (nothing on a losing
+ *      day, whose loss is carried forward instead);
+ *   2. upkeep: `rent`, or whatever is left if the purse can't cover it;
+ *   3. a purse left below `floor` hangs.
+ */
+export function settleDay(p: { balance: number; dayStart: number; taxRate: number; rent: number; floor: number; carry?: number }): {
   profit: number;
   tithe: number;
   rentPaid: number;
   balance: number;
   hanged: boolean;
+  /** Losses still to be set against future profits. */
+  carry: number;
+  /** How much of today's profit earlier losses sheltered from tax. */
+  offset: number;
 } {
   let balance = Math.max(0, p.balance);
   const profit = balance - p.dayStart;
   const rate = Math.min(1, Math.max(0, p.taxRate));
-  const tithe = Math.floor(Math.max(0, profit) * rate);
+  const before = Math.max(0, p.carry ?? 0);
+  const offset = profit > 0 ? Math.min(before, profit) : 0;
+  const carry = profit > 0 ? before - offset : before - profit;
+  const tithe = Math.floor(Math.max(0, profit - offset) * rate);
   balance -= tithe;
   const rentPaid = Math.min(Math.max(0, p.rent), balance);
   balance -= rentPaid;
-  return { profit, tithe, rentPaid, balance, hanged: balance < p.floor };
+  return { profit, tithe, rentPaid, balance, hanged: balance < p.floor, carry, offset };
 }
 
 /** History shorter than this says nothing a 24h change doesn't say better. */

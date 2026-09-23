@@ -110,6 +110,8 @@ export type Subject = PurseFields & {
   trades?: number;
   cooldownUntil?: number;
   cooldownCoin?: Asset;
+  /** Losses from losing days not yet set against a profitable day's tax (sats). */
+  lossCarry?: number;
   /** What it has learned from every trade it has closed, plus its written lessons (./knowledge.ts). */
   knowledge?: import("./knowledge.ts").Knowledge;
 };
@@ -132,6 +134,8 @@ export type King = PurseFields & {
 export type LogEntry = {
   id: string;
   day: number;
+  /** When it happened (ms since epoch); absent on older entries. */
+  at?: number;
   text: string;
   kind: "dawn" | "crown" | "subject" | "death" | "tape" | "system" | "talk";
 };
@@ -177,6 +181,16 @@ export type GameState = {
   feed?: { at: number; source: string; listed: number; priced: number; kraken: number; withBook: number; stale: string[]; held: string[] };
   /** The latest trading tick's risk checks: trades blocked, by reason. */
   risk?: { at: number; blocked: Record<string, number>; pausedToday?: { day: number; reason: string } };
+  /** The season now running: the parish's objective (./progress.ts). */
+  season?: import("./progress.ts").Season;
+  /** Seasons already judged, newest first. */
+  seasons?: import("./progress.ts").SeasonResult[];
+  /** Milestones reached, by id, with when. */
+  milestones?: Record<string, { at: number; day: number }>;
+  /** What the last dawn moved: profit banked, tax, upkeep, stakes paid out, purses taken at the gallows. */
+  lastDawn?: import("./progress.ts").DawnBook;
+  /** Coins whose big move has been chronicled today. */
+  marketNotes?: { day: number; coins: string[] };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset };
 };

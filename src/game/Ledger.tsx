@@ -5,6 +5,7 @@ import { stallCoins } from "./dawn";
 import { useGame } from "./store";
 import type { Asset, Side } from "./dawn";
 import { CouncilPanel } from "./CouncilPanel";
+import { LawsPanel, NextRank, ObjectivePanel, RankBadge } from "./Progress";
 import { RollPosition, TradeCard, TradingFloor } from "./TradingViews";
 import type { Position, Strategy } from "./strategies";
 import { TEMPER_DESCRIPTIONS, temperOf, type Temper } from "./trading";
@@ -108,6 +109,7 @@ function WalletInspect({ target, tape }: { target: WalletTarget; tape: Tape }) {
           knowledge={target.knowledge}
         />
       ) : null}
+      {!target.king ? <NextRank name={target.title} record={target.record} /> : null}
       {!target.king ? (
         <p className="hint">
           {target.title} is {TEMPER_DESCRIPTIONS[target.temper ?? temperOf(target.id)]}.
@@ -196,6 +198,10 @@ export function Ledger() {
         <p className="tithe-value">{Math.round(taxRate * 100)}%</p>
       </section>
 
+      <ObjectivePanel tape={tape} />
+
+      <LawsPanel taxRate={taxRate} />
+
       <MarketLine />
 
       <KingAudience />
@@ -212,7 +218,9 @@ export function Ledger() {
               <li key={sub.id}>
                 <button type="button" className="roll-hit" onClick={() => select(sub.id)}>
                   <span className="roll-name">
-                    <span>{sub.firstName}</span>
+                    <span>
+                      {sub.firstName} <RankBadge record={sub.record} />
+                    </span>
                     <RollPosition strategy={sub.strategy} position={sub.position} />
                   </span>
                   <span className="roll-figures">
@@ -276,6 +284,11 @@ export function Ledger() {
         <ol>
           {log.slice(0, 14).map((entry) => (
             <li key={entry.id} data-kind={entry.kind}>
+              {entry.at ? (
+                <time className="log-time" dateTime={new Date(entry.at).toISOString()}>
+                  Day {entry.day} · {new Date(entry.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </time>
+              ) : null}
               {entry.text}
             </li>
           ))}

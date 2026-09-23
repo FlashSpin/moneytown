@@ -65,7 +65,7 @@ export function makeSubject(rng: () => number, taken: Set<string>, grant: number
 }
 
 export function pushLog(state: { day: number; log: LogEntry[] }, kind: LogEntry["kind"], text: string): LogEntry[] {
-  const entry: LogEntry = { id: uid("l", Math.random), day: state.day, text, kind };
+  const entry: LogEntry = { id: uid("l", Math.random), day: state.day, at: Date.now(), text, kind };
   return [entry, ...state.log].slice(0, 80);
 }
 

@@ -41,6 +41,22 @@ describe("entry signals", () => {
     assert.equal(entrySignal("reversion", rising)?.side, "short");
   });
 
+  it("conservative buys only a calm, steady uptrend", () => {
+    const calm = Array.from({ length: 30 }, (_, i) => 100 + i * 0.03);
+    assert.equal(entrySignal("conservative", calm)?.side, "long");
+    const wild = calm.map((v, i) => v + (i % 2 ? 1.5 : -1.5));
+    assert.equal(entrySignal("conservative", wild), null, "too volatile");
+    const falling = calm.slice().reverse();
+    assert.equal(entrySignal("conservative", falling), null, "never shorts");
+  });
+
+  it("volatility breakout follows a sudden widening of the swings", () => {
+    const quiet = Array.from({ length: 28 }, (_, i) => 100 + (i % 2 ? 0.05 : -0.05));
+    const burst = [...quiet, 100.8, 100.2, 101.5, 100.9, 102.2, 102.4];
+    assert.equal(entrySignal("volatility", burst)?.side, "long");
+    assert.equal(entrySignal("volatility", [...quiet, ...quiet.slice(0, 6)]), null);
+  });
+
   it("trend fires only on the crossover itself", () => {
     const cross = [...flat(24), 106];
     assert.equal(entrySignal("trend", cross)?.side, "long");
@@ -133,7 +149,7 @@ describe("choosing strategies", () => {
   it("gives each temperament its own default, across the whole market", () => {
     const a = defaultStrategy("s-aaa", "cautious", market);
     const b = defaultStrategy("s-zzz", "bold", market);
-    assert.equal(a.kind, "reversion");
+    assert.equal(a.kind, "conservative");
     assert.equal(a.shorts, false);
     assert.equal(b.kind, "breakout");
     assert.deepEqual(a.coins, [], "no watchlist: it scans every coin");

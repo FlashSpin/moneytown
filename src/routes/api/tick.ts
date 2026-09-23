@@ -39,7 +39,12 @@ async function tick(request: Request): Promise<Response> {
       if (row.day !== fromDay) return Response.json({ ok: true, skipped: true, day: row.day });
     }
     const next = await runDailyTick(row.state);
-    if (await saveNewDay(next, row.rev)) return Response.json({ ok: true, day: next.day });
+    if (await saveNewDay(next, row.rev)) {
+      // Once a day, drop price history past its retention.
+      const { pruneHistory } = await import("@/lib/history.server");
+      await pruneHistory().catch((e: unknown) => console.warn("[tick] history not pruned:", e));
+      return Response.json({ ok: true, day: next.day });
+    }
   }
   return Response.json({ ok: false, error: "world kept changing; try again" }, { status: 409 });
 }

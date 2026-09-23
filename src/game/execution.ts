@@ -15,6 +15,7 @@
  * Purses are in sats; orders are priced in USD at `tape.btcUsd`.
  */
 import type { Asset } from "./dawn.ts";
+import { FEE_RATE } from "./risk.ts";
 import type { AssetQuote, Tape } from "./types.ts";
 
 export const MIN_SLIPPAGE = 0.0002;
@@ -33,6 +34,8 @@ export type OpenFill =
 export type CloseFill = { price: number; mid: number; cost: number };
 
 export type Executor = {
+  /** The exchange's fee per fill, as a fraction of the stake. */
+  feeRate: number;
   /** Fill an order to open `side` on `coin` for up to `stake` sats. */
   open(coin: Asset, side: "long" | "short", stake: number): OpenFill;
   /** Fill the order that closes a position of `stake` sats and `qty` coins. */
@@ -42,6 +45,7 @@ export type Executor = {
 /** Fills at the given price with no costs and no limits — for tests and what-ifs. */
 export function idealExecutor(priceOf: (coin: Asset) => number): Executor {
   return {
+    feeRate: FEE_RATE,
     open: (coin, _side, stake) => {
       const px = priceOf(coin);
       return px > 0 && stake > 0 ? { ok: true, price: px, mid: px, stake, qty: 0, cost: 0 } : { ok: false, reason: "no price" };
@@ -81,6 +85,7 @@ const floorTo = (n: number, decimals: number) => {
 export function marketExecutor(tape: Pick<Tape, "assets" | "btcUsd" | "coins">, top: ReadonlySet<Asset> = new Set(tape.coins?.slice(0, 10))): Executor {
   const usdPerSat = tape.btcUsd / SATS_PER_BTC;
   return {
+    feeRate: FEE_RATE,
     open(coin, side, stake) {
       const q = tape.assets[coin];
       if (!q || !(q.usd > 0)) return { ok: false, reason: "rejected: no price" };

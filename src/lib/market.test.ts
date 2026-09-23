@@ -121,3 +121,12 @@ describe("Kraken quotes and order rules", () => {
     assert.deepEqual(p.get("SOL"), { key: "SOLUSD", ordermin: 0.02, costmin: 0.5, lotDecimals: 8 });
   });
 });
+
+describe("Kraken candles", () => {
+  it("reads closed 5-minute candles and leaves out the one still forming", async () => {
+    const { parseKrakenOhlc } = await import("./market.ts");
+    const body = { result: { SOLUSD: [[1000, "1", "2", "0.5", "1.5", "1.2", "10", 3], [1300, "1.5", "2", "1", "1.8", "1.6", "5", 2], [1600, "1.8", "1.9", "1.7", "1.85", "1.8", "1", 1]], last: 1600 } };
+    assert.deepEqual(parseKrakenOhlc(body), [{ t: 1_000_000, close: 1.5 }, { t: 1_300_000, close: 1.8 }]);
+    assert.deepEqual(parseKrakenOhlc({ error: ["EGeneral"] }), []);
+  });
+});

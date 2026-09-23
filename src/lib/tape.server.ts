@@ -49,7 +49,7 @@ async function fetchJson(url: string, timeoutMs = 6000): Promise<unknown> {
 const PAIRS_TTL_MS = 12 * 3_600_000;
 let pairsCache: { at: number; usd: Map<string, KrakenPair>; gbpKey: string | null } | null = null;
 
-async function krakenPairs(): Promise<{ usd: Map<string, KrakenPair>; gbpKey: string | null } | null> {
+export async function krakenPairs(): Promise<{ usd: Map<string, KrakenPair>; gbpKey: string | null } | null> {
   if (pairsCache && Date.now() - pairsCache.at < PAIRS_TTL_MS) return pairsCache;
   try {
     const body = await fetchJson("https://api.kraken.com/0/public/AssetPairs");

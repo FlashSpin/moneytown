@@ -13,6 +13,9 @@ import { uid } from "./wallets";
 /** One line of this visitor's private audience with the King. */
 export type AudienceLine = { id: string; from: "you" | "king" | "note"; text: string };
 
+/** The sidebar's tabs. */
+export type LedgerTab = "overview" | "trading" | "parish" | "king" | "chronicle";
+
 /** Client-only viewer state — never part of the server-authoritative GameState. */
 type ViewState = {
   audience: AudienceLine[];
@@ -28,6 +31,10 @@ type ViewState = {
   /** Seal-bearer only: how each AI provider fared on the last petition. */
   diagnostics: { provider: string; configured: boolean; last: string | null }[] | null;
   selectedId: string | null;
+  /** The sidebar tab showing. */
+  tab: LedgerTab;
+  /** Whether the guide (onboarding + glossary) is open. */
+  guideOpen: boolean;
   loading: boolean;
   /** True once a real server world has been applied (the placeholder is not one). */
   synced: boolean;
@@ -46,6 +53,8 @@ type Actions = {
   /** Re-check a seal remembered on this device (on page load). */
   restoreSeal: () => Promise<void>;
   select: (id: string | null) => void;
+  setTab: (tab: LedgerTab) => void;
+  setGuide: (open: boolean) => void;
   tick: (dt: number) => void;
 };
 
@@ -199,6 +208,8 @@ export const useGame = create<Store>((set, get) => ({
   diagnostics: null,
   liveTape: null,
   selectedId: null,
+  tab: "overview",
+  guideOpen: false,
   loading: true,
   synced: false,
   error: null,
@@ -308,7 +319,10 @@ export const useGame = create<Store>((set, get) => ({
     }
   },
 
-  select: (id) => set({ selectedId: id }),
+  // Picking someone (on the map or in a list) shows their wallet in the Parish tab.
+  select: (id) => set(id ? { selectedId: id, tab: "parish" } : { selectedId: null }),
+  setTab: (tab) => set({ tab }),
+  setGuide: (guideOpen) => set({ guideOpen }),
 
   tick: (dt) => {
     const s = get();

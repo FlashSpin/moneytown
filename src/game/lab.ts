@@ -101,6 +101,7 @@ const RANGES: Record<StrategyKind, Range> = {
   conservative: { look: [8, 150], fast: [2, 30], thr: [0.1, 3] },
   volatility: { look: [8, 120], fast: [3, 24], thr: [1.2, 4] },
   rotation: { look: [6, 200], fast: [1, 6], thr: [0, 10] },
+  hold: { look: [24, 230], fast: [1, 24], thr: [0, 5] },
 };
 
 /**
@@ -108,8 +109,9 @@ const RANGES: Record<StrategyKind, Range> = {
  * parish keeps (24 hours of 5-minute ticks, 10 days of hourly bars).
  */
 export const MAX_WARMUP: Record<Bar, number> = { 1: 280, 3: 90, 12: 230, 48: 56 };
-/** The longest hold, in bars: two days on short bars, a week hourly, two weeks on 4-hour bars. */
+/** The longest hold, in bars: two days on short bars, a week hourly, two weeks on 4-hour bars (a month for the holder). */
 const MAX_HOLD: Record<Bar, number> = { 1: 576, 3: 192, 12: 168, 48: 84 };
+const maxHold = (kind: StrategyKind, bar: Bar) => (kind === "hold" ? Math.round((720 * 12) / bar) : MAX_HOLD[bar]);
 const TP: [number, number] = [0.5, 25];
 const SL: [number, number] = [0.3, 12];
 
@@ -129,7 +131,7 @@ export function fix(g: Genome): Genome {
   genes.thr = round(clamp(genes.thr, r.thr[0] * s, r.thr[1] * s), 3);
   genes.filter = genes.filter > 0 ? Math.round(Math.max(genes.filter, 10)) : 0;
   genes.trail = genes.trail > 0 ? round(clamp(genes.trail, 0.3, 10)) : 0;
-  genes.hold = Math.round(clamp(genes.hold, 2, MAX_HOLD[bar]));
+  genes.hold = Math.round(clamp(genes.hold, 2, maxHold(g.kind, bar)));
   genes.regime = genes.regime ? 1 : 0;
   genes.entry = genes.entry ? 1 : 0;
   // Whatever it needs must fit the history the live parish keeps.
@@ -187,7 +189,7 @@ export function randomGenome(r: () => number, kind: StrategyKind, bar: Bar): Gen
     thr: range.thr[1] > 0 ? uni(r, range.thr[0] * s, range.thr[1] * s) : 0,
     filter: r() < 0.5 ? 0 : Math.round(logUni(r, 20, MAX_WARMUP[bar])),
     trail: r() < 0.5 ? 0 : logUni(r, 0.5, 8),
-    hold: Math.round(logUni(r, 3, MAX_HOLD[bar])),
+    hold: Math.round(logUni(r, 3, maxHold(kind, bar))),
     regime: r() < 0.5 ? 1 : 0,
     entry: r() < 0.5 ? 1 : 0,
   };
@@ -257,6 +259,7 @@ export function describe(g: Genome): string {
   const bits = [`${STRATEGY_INFO[g.kind].label}`, BAR_LABEL[g.genes.bar] + " bars", `look ${g.genes.look}`];
   if (g.kind === "trend" || g.kind === "conservative" || g.kind === "volatility") bits.push(`fast ${g.genes.fast}`);
   if (g.kind === "rotation") bits.push(`top ${g.genes.fast}`);
+  if (g.kind === "hold") bits.push(`average rising over ${g.genes.fast}`);
   if (g.genes.thr) bits.push(`trigger ${g.genes.thr}`);
   if (g.genes.filter) bits.push(`trend filter ${g.genes.filter}`);
   if (g.genes.trail) bits.push(`trailing ${g.genes.trail}%`);

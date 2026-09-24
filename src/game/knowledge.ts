@@ -13,7 +13,7 @@ import type { Asset } from "./dawn.ts";
 export type Tally = { w: number; l: number; pnl: number };
 
 /** "own" = trades a villager placed itself at the trading desk. */
-export type Approach = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility" | "rotation" | "own";
+export type Approach = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility" | "rotation" | "hold" | "own";
 
 export type Knowledge = {
   coins: Record<Asset, Tally>;

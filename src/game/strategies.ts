@@ -27,10 +27,10 @@ export { FEE_RATE } from "./risk.ts";
 export const COOLDOWN_TICKS = 2;
 export const TICK_MS = 5 * 60_000;
 
-export type StrategyKind = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility" | "rotation";
-export const STRATEGY_KINDS: StrategyKind[] = ["scalp", "momentum", "breakout", "reversion", "trend", "conservative", "volatility", "rotation"];
+export type StrategyKind = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility" | "rotation" | "hold";
+export const STRATEGY_KINDS: StrategyKind[] = ["scalp", "momentum", "breakout", "reversion", "trend", "conservative", "volatility", "rotation", "hold"];
 /** Strategies that only ever buy, whatever their `shorts` setting. */
-export const LONG_ONLY: ReadonlySet<StrategyKind> = new Set(["conservative", "rotation"]);
+export const LONG_ONLY: ReadonlySet<StrategyKind> = new Set(["conservative", "rotation", "hold"]);
 
 export const STRATEGY_INFO: Record<
   StrategyKind,
@@ -83,6 +83,14 @@ export const STRATEGY_INFO: Record<
     sl: 0.8,
     maxHoldH: 6,
     warmup: 25,
+  },
+  hold: {
+    label: "Holder",
+    about: "buys a coin in a long uptrend and simply holds it while it stays above its long average, for weeks if need be; sells when it falls below — rarely trades",
+    tp: 25,
+    sl: 12,
+    maxHoldH: 720,
+    warmup: 201,
   },
   rotation: {
     label: "Rotation",
@@ -141,10 +149,11 @@ export const DEFAULT_GENES: Record<StrategyKind, Genes> = {
   conservative: { bar: 1, look: 24, fast: 6, thr: 0.4, filter: 0, trail: 0, hold: 72 },
   volatility: { bar: 1, look: 24, fast: 6, thr: 2, filter: 0, trail: 0, hold: 72 },
   rotation: { bar: 12, look: 72, fast: 3, thr: 2, filter: 0, trail: 0, hold: 120, regime: 1 },
+  hold: { bar: 12, look: 200, fast: 3, thr: 0, filter: 0, trail: 0, hold: 720, regime: 1 },
 };
 
 /** Percent thresholds grow with the bar: a 4-hour bar moves more than a 5-minute one. */
-const PCT_THR: ReadonlySet<StrategyKind> = new Set(["scalp", "momentum", "conservative", "rotation"]);
+const PCT_THR: ReadonlySet<StrategyKind> = new Set(["scalp", "momentum", "conservative", "rotation", "hold"]);
 export const thrScale = (kind: StrategyKind, bar: Bar) => (PCT_THR.has(kind) ? Math.sqrt(bar) : 1);
 
 /**
@@ -461,6 +470,15 @@ function rawSignal(kind: StrategyKind, s: Series, g: Genes): Signal {
         strength: Math.min(5, recent / before),
       };
     }
+    case "hold": {
+      // In a long uptrend: above its long average by at least the trigger, and the average itself rising.
+      const avg = sma(s, g.look);
+      const before = sma(s, g.look, Math.max(1, g.fast));
+      if (avg === null || before === null || !(avg > before)) return null;
+      const above = (last / avg - 1) * 100;
+      if (above <= g.thr) return null;
+      return { side: "long", reason: `holding: ${above.toFixed(1)}% above its ${spanLabel(g.look, g.bar)} average, which is rising`, strength: 1 + above / 5 };
+    }
     case "rotation": {
       // Every coin's return over the window; the scan takes the strongest (see tradeStep).
       const c = change(s, g.look);
@@ -488,6 +506,10 @@ function exitSignal(kind: StrategyKind, side: "long" | "short", s: Series, g: Ge
   if (kind === "reversion") {
     const v = rsi(s, g.look);
     if (v !== null && ((side === "long" && v >= 50) || (side === "short" && v <= 50))) return `RSI back to ${v.toFixed(0)}`;
+  }
+  if (kind === "hold") {
+    const avg = sma(s, g.look);
+    if (avg !== null && s[s.length - 1]! < avg) return `fell below its ${spanLabel(g.look, g.bar)} average`;
   }
   if (kind === "conservative") {
     const fast = sma(s, g.fast);

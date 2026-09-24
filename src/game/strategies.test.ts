@@ -340,3 +340,19 @@ describe("cheaper fills, Bitcoin's trend and rotation", () => {
     assert.match(out.event!.reason, /no longer among the 1 leaders/);
   });
 });
+
+describe("the holder", () => {
+  const g = { bar: 12 as const, look: 20, fast: 3, thr: 0, filter: 0, trail: 0, hold: 720 };
+  it("buys a coin above its rising long average, and leaves when it falls below", () => {
+    const rising = Array.from({ length: 30 }, (_, i) => 100 + i);
+    assert.equal(entrySignal("hold", rising, g)?.side, "long");
+    const falling = Array.from({ length: 30 }, (_, i) => 130 - i);
+    assert.equal(entrySignal("hold", falling, g), null);
+    const st: Strategy = { kind: "hold", coins: ["SOL"], sizePct: 0.5, takeProfitPct: 25, stopLossPct: 12, shorts: false, genes: g };
+    const open = tradeStep({ id: "h", firstName: "Hal", balance: 100_000, strategy: st }, () => 129, () => rising, 1_000, 20_000).trader;
+    assert.ok(open.position);
+    const dip = [...rising, 118];
+    const out = tradeStep(open, () => 118, () => dip, 2_000, 20_000);
+    assert.match(out.event?.reason ?? "", /fell below its/);
+  });
+});

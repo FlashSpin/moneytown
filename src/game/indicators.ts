@@ -3,15 +3,21 @@
  * tick — every 5 minutes). Pure, so they are easy to test.
  */
 
+/**
+ * A price series, oldest first. Any array-like works — the backtests pass
+ * zero-copy views of typed arrays so they never copy prices.
+ */
+export type Series = ArrayLike<number>;
+
 /** % change from `n` samples ago to the last, or null without enough data. */
-export function change(series: number[], n: number): number | null {
+export function change(series: Series, n: number): number | null {
   if (series.length <= n) return null;
   const then = series[series.length - 1 - n]!;
   const now = series[series.length - 1]!;
   return then > 0 ? ((now - then) / then) * 100 : null;
 }
 
-export function sma(series: number[], n: number, offset = 0): number | null {
+export function sma(series: Series, n: number, offset = 0): number | null {
   const end = series.length - offset;
   if (end < n || n <= 0) return null;
   let sum = 0;
@@ -20,7 +26,7 @@ export function sma(series: number[], n: number, offset = 0): number | null {
 }
 
 /** Wilder's RSI over `n` periods (0-100), or null without n+1 samples. */
-export function rsi(series: number[], n = 14): number | null {
+export function rsi(series: Series, n = 14): number | null {
   if (series.length < n + 1) return null;
   let gain = 0;
   let loss = 0;
@@ -36,19 +42,34 @@ export function rsi(series: number[], n = 14): number | null {
 }
 
 /** Highest and lowest of the `n` samples BEFORE the last one (the range the last one might break). */
-export function priorRange(series: number[], n: number): { high: number; low: number } | null {
+export function priorRange(series: Series, n: number): { high: number; low: number } | null {
   if (series.length < n + 1) return null;
-  const window = series.slice(series.length - 1 - n, series.length - 1);
-  return { high: Math.max(...window), low: Math.min(...window) };
+  let high = -Infinity;
+  let low = Infinity;
+  for (let i = series.length - 1 - n; i < series.length - 1; i++) {
+    const v = series[i]!;
+    if (v > high) high = v;
+    if (v < low) low = v;
+  }
+  return { high, low };
 }
 
-/** Standard deviation of per-sample % returns over the last `n` samples. */
-export function volatility(series: number[], n = 12): number | null {
-  if (series.length < n + 1) return null;
-  const rets: number[] = [];
-  for (let i = series.length - n; i < series.length; i++) rets.push(((series[i]! - series[i - 1]!) / series[i - 1]!) * 100);
-  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
-  return Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / rets.length);
+/**
+ * Standard deviation of per-sample % returns over `n` samples, ending
+ * `offset` samples before the last (0 = up to the last).
+ */
+export function volatility(series: Series, n = 12, offset = 0): number | null {
+  const end = series.length - offset;
+  if (end < n + 1) return null;
+  let sum = 0;
+  let sq = 0;
+  for (let i = end - n; i < end; i++) {
+    const r = ((series[i]! - series[i - 1]!) / series[i - 1]!) * 100;
+    sum += r;
+    sq += r * r;
+  }
+  const mean = sum / n;
+  return Math.sqrt(Math.max(0, sq / n - mean * mean));
 }
 
 // ── The tick history: a rolling window of prices for every coin ─────────────

@@ -1,0 +1,59 @@
+# The strategy lab: breeds every kind of strategy on every bar size against
+# months of real candles, judges them on data they never saw, and adds the
+# ones that hold up to the guild book (POST /api/lab) that new villagers and
+# the King's summons draw on. Each run starts from the book's best.
+# Daily, or by hand from the Actions tab. Runs on pushes to the lab's own
+# files too (without posting), so changes to it can be tried on real data.
+name: Strategy lab
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Time budget in minutes"
+        default: "30"
+      post:
+        description: "Post the results to the guild book (1 = yes)"
+        default: "1"
+  push:
+    branches: [claude/working-properly-b4rxyz]
+    paths:
+      - src/game/lab.ts
+      - src/game/backtest.ts
+      - scripts/strategy-lab.ts
+      - .github/workflows/strategy-lab.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategy-lab
+  cancel-in-progress: false
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Breed and judge strategies
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://moneytown.vercel.app' }}
+          LAB_MINUTES: ${{ inputs.minutes || '30' }}
+          # Only the main branch's scheduled or manual runs write to the live book.
+          POST_RESULTS: ${{ github.ref == 'refs/heads/main' && github.event_name != 'push' && (inputs.post || '1') || '0' }}
+        run: node --experimental-strip-types scripts/strategy-lab.ts
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-lab-report
+          path: lab-data/report.json
+          if-no-files-found: ignore
+          retention-days: 30

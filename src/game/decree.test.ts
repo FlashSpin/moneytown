@@ -35,9 +35,11 @@ describe("royal commands are held to the law", () => {
 
   it("parses a full command and knows what needs the seal", () => {
     const c = parseCommand({ summon: "2", banish: ["Hugh"], taxRate: 12, favorAsset: "sol" }, ["BTC", "SOL"]);
-    assert.deepEqual(c, { summon: 2, banish: ["Hugh"], taxRate: 0.12, favorAsset: "SOL", strategies: [], halt: null, pause: [], resume: [] });
+    assert.deepEqual(c, { summon: 2, summonAs: null, banish: ["Hugh"], taxRate: 0.12, favorAsset: "SOL", strategies: [], halt: null, pause: [], resume: [] });
     assert.equal(needsSeal(c), true);
     assert.equal(needsSeal(parseCommand({ summon: 1 }, [])), false);
+    assert.equal(parseCommand({ summon: 1, summonAs: "bre-abc123" }, []).summonAs, "bre-abc123");
+    assert.equal(parseCommand({ summon: 1, summonAs: "<script>" }, []).summonAs, null);
     assert.equal(needsSeal(parseCommand({ banish: [], taxRate: null }, [])), false);
     const s = parseCommand({ strategies: [{ name: "Agnes", kind: "scalp", coins: ["SOL"] }, { kind: "trend" }, "junk"] }, []);
     assert.deepEqual(s.strategies.map((x) => x.name), ["Agnes"], "unnamed and junk entries are dropped");

@@ -89,3 +89,20 @@ export async function loadHistory(from: number, coins?: string[]): Promise<Recor
   for (const r of rows) (out[r.coin] ??= []).push({ t: Number(r.t), price: Number(r.price) });
   return out;
 }
+
+/** Kraken's closed hourly candles (up to 30 days) for each of `coins`, for strategies on longer bars. */
+export async function krakenHourly(coins: string[]): Promise<Record<string, { t: number; close: number }[]>> {
+  const pairs = await krakenPairs();
+  const out: Record<string, { t: number; close: number }[]> = {};
+  for (const coin of coins) {
+    const key = pairs?.usd.get(coin)?.key;
+    if (!key) continue;
+    try {
+      const res = await fetch(`https://api.kraken.com/0/public/OHLC?pair=${key}&interval=60`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) out[coin] = parseKrakenOhlc(await res.json());
+    } catch {
+      // Tried again within the hour.
+    }
+  }
+  return out;
+}

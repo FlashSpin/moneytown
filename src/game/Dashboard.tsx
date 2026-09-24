@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ClipboardCheck,
+  FlaskConical,
   Coins,
   Crown,
   Landmark,
@@ -257,6 +258,9 @@ export function KeyActions() {
       </a>
       <a className="btn" href="/paper">
         <ClipboardCheck size={16} aria-hidden /> Paper trading
+      </a>
+      <a className="btn" href="/lab">
+        <FlaskConical size={16} aria-hidden /> Strategy lab
       </a>
       <button type="button" className="btn" onClick={() => setGuide(true)}>
         <BookOpenCheck size={16} aria-hidden /> How it works

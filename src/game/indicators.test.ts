@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendTick, change, priceFresh, validatePrices, priorRange, rsi, seriesOf, sma, tradingSeries, volatility } from "./indicators.ts";
+import { appendHourly, appendTick, change, HOUR_MS, priceFresh, seedHourly, seriesForBar, validatePrices, priorRange, rsi, seriesOf, sma, tradingSeries, volatility } from "./indicators.ts";
 
 describe("indicators", () => {
   const up = [100, 101, 102, 103, 104, 105];
@@ -84,5 +84,39 @@ describe("checking prices before they are recorded", () => {
     assert.deepEqual(second.accepted, { SOL: 141 }, "two ticks agree: a real move");
     const third = validatePrices(t2, { SOL: 60 });
     assert.deepEqual(third.held, ["SOL"], "a different wild price is held again");
+  });
+});
+
+describe("longer bars", () => {
+  const H = HOUR_MS;
+  it("keeps one close per hour, the forming hour taking the latest price", () => {
+    let h = appendHourly(undefined, 10 * H + 5, { BTC: 1 });
+    h = appendHourly(h, 10 * H + 50 * 60_000, { BTC: 2 });
+    h = appendHourly(h, 11 * H + 5, { BTC: 3 });
+    assert.deepEqual(h.BTC, { t0: 10 * H, px: [2, 3] });
+    h = appendHourly(h, 13 * H, { BTC: 4 });
+    assert.deepEqual(h.BTC!.px, [2, 3, 3, 4], "a short gap repeats the last close");
+    h = appendHourly(h, 30 * H, { BTC: 5 });
+    assert.deepEqual(h.BTC, { t0: 30 * H, px: [5] }, "a long gap starts again");
+  });
+
+  it("serves only finished bars, and 4-hour bars from hours ending on the 4-hour mark", () => {
+    const now = 20 * H + 10 * 60_000;
+    const ticks = { t: [now], px: { BTC: [9] }, seen: { BTC: now }, h: { BTC: { t0: 10 * H, px: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] } } };
+    assert.deepEqual(seriesForBar(ticks, "BTC", 12, now), [10, 11, 12, 13, 14, 15, 16, 17, 18, 19], "the forming 20:00 hour is left out");
+    assert.deepEqual(seriesForBar(ticks, "BTC", 48, now), [11, 15, 19], "closes at 12:00, 16:00 and 20:00");
+    assert.deepEqual(seriesForBar({ ...ticks, seen: { BTC: now - 3 * H } }, "BTC", 12, now), [], "stale price");
+  });
+
+  it("builds 15-minute closes from the ticks, leaving out the forming one", () => {
+    const M = 60_000;
+    const t = [0, 5, 10, 15, 20, 25, 30].map((m) => m * M);
+    const ticks = { t, px: { SOL: [1, 2, 3, 4, 5, 6, 7] }, seen: { SOL: 30 * M } };
+    assert.deepEqual(seriesForBar(ticks, "SOL", 3, 31 * M), [3, 6]);
+  });
+
+  it("seeds from exchange candles and keeps later hours", () => {
+    const e = seedHourly({ t0: 5 * H, px: [50, 51] }, [{ t: 2 * H, close: 20 }, { t: 3 * H, close: 30 }, { t: 4 * H, close: 40 }]);
+    assert.deepEqual(e, { t0: 2 * H, px: [20, 30, 40, 50, 51] });
   });
 });

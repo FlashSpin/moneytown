@@ -155,8 +155,11 @@ export type Strategy = {
   kind: StrategyKind;
   /** Tuned genes (from the strategy lab); absent = the kind's defaults. */
   genes?: Genes;
-  /** Where tuned genes came from: the lab's genome, its parent, and its generation. */
-  genome?: { id: string; parent?: string; gen: number };
+  /**
+   * Where tuned genes came from: the lab's genome, its parent, its generation,
+   * and the guild-book entry it was drawn from (live results count towards it).
+   */
+  genome?: { id: string; parent?: string; gen: number; book?: string };
   /** Coins it focuses on; empty = the whole market (every listed coin). */
   coins: Asset[];
   /** Share of the purse put into each trade (0.1-1). */
@@ -180,8 +183,9 @@ export type Position = {
   peakUsd: number;
   /** What opened it: a strategy, or the villager's own call at the desk. */
   by?: Approach;
-  /** The genes of the strategy that opened it (its exits follow them even if the strategy changes). */
+  /** The genes of the strategy that opened it (its exits follow them even if the strategy changes), and its lab genome. */
   genes?: Genes;
+  genomeId?: string;
   /** The villager's own targets for a trade it placed itself (instead of its strategy's). */
   own?: { tp: number; sl: number; maxHoldH: number };
   /** Coins bought or sold short (0 when filled without exchange rules), and the mid price at entry. */
@@ -246,12 +250,33 @@ const ALL_WORDS = new Set(["ALL", "ANY", "MARKET", "WHOLE MARKET", "EVERY", "EVE
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
+/** A strategy from the lab's guild book, as `cleanStrategy` needs it (./lab.ts PoolEntry). */
+export type BookGenome = { id: string; kind: StrategyKind; genes: Genes; tp: number; sl: number; shorts: boolean; gen: number; parent?: string; retired?: string };
+
+/** Train a strategy in a book genome: its genes, targets and shorting; the rest from `base`. */
+export function fromBook(g: BookGenome, base: Pick<Strategy, "coins" | "sizePct" | "note">, as: { id?: string; parent?: string; gen?: number } = {}): Strategy {
+  return {
+    kind: g.kind,
+    genes: g.genes,
+    genome: { id: as.id ?? g.id, ...(as.parent ?? g.parent ? { parent: as.parent ?? g.parent } : {}), gen: as.gen ?? g.gen, book: g.id },
+    coins: base.coins,
+    sizePct: base.sizePct,
+    takeProfitPct: g.tp,
+    stopLossPct: g.sl,
+    shorts: LONG_ONLY.has(g.kind) ? false : g.shorts,
+    ...(base.note ? { note: base.note } : {}),
+  };
+}
+
 /**
  * Tidy a proposed strategy (from the AI or the owner): a known kind, listed
  * coins to focus on ("all" or [] = the whole market), sane size and targets.
- * Unknown pieces fall back to `base`.
+ * Unknown pieces fall back to `base`. `genome` names a strategy from the
+ * guild book (`book`): the villager is trained in it — its genes and targets.
+ * A villager already on a book strategy keeps its tuned genes and targets
+ * unless it changes kind or genome ("genome":"none" leaves the book).
  */
-export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[]): Strategy {
+export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[], book: BookGenome[] = []): Strategy {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const kind = STRATEGY_KINDS.includes(String(r.kind ?? r.strategy ?? "").toLowerCase() as StrategyKind)
     ? (String(r.kind ?? r.strategy).toLowerCase() as StrategyKind)
@@ -269,18 +294,27 @@ export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[]): St
   const size = num(r.sizePct ?? r.size);
   const tp = num(r.takeProfitPct ?? r.takeProfit ?? r.tp);
   const sl = num(r.stopLossPct ?? r.stopLoss ?? r.sl);
+  const sizePct = Number.isFinite(size) && size > 0 ? clamp(size > 1 ? size / 100 : size, SIZE_MIN, 1) : base.sizePct;
+  const note = typeof r.note === "string" ? r.note.replace(/\s+/g, " ").trim().slice(0, 200) : typeof r.plan === "string" ? String(r.plan).slice(0, 200) : base.note;
+  const asked = typeof r.genome === "string" ? r.genome.trim() : "";
+  const chosen = asked && asked !== "none" ? book.find((g) => g.id === asked && !g.retired) : undefined;
+  if (chosen) {
+    const same = base.genome && (base.genome.book ?? base.genome.id) === chosen.id;
+    return same ? { ...base, coins, sizePct, note } : fromBook(chosen, { coins, sizePct, note });
+  }
   const kindChanged = kind !== base.kind;
+  // A villager on a book strategy keeps it (genes and targets) unless it changes kind or leaves the book.
+  if (base.genome && base.genes && !kindChanged && asked !== "none") return { ...base, coins, sizePct, note };
   return {
     kind,
     coins,
-    sizePct: Number.isFinite(size) && size > 0 ? clamp(size > 1 ? size / 100 : size, SIZE_MIN, 1) : base.sizePct,
+    sizePct,
     takeProfitPct: Number.isFinite(tp) && tp > 0 ? clamp(tp, 0.5, 15) : kindChanged ? STRATEGY_INFO[kind].tp : base.takeProfitPct,
     stopLossPct: Number.isFinite(sl) && sl > 0 ? clamp(sl, 0.3, 10) : kindChanged ? STRATEGY_INFO[kind].sl : base.stopLossPct,
     shorts: typeof r.shorts === "boolean" ? r.shorts : base.shorts,
-    note: typeof r.note === "string" ? r.note.replace(/\s+/g, " ").trim().slice(0, 200) : typeof r.plan === "string" ? String(r.plan).slice(0, 200) : base.note,
-    // Tuned genes stay with the same kind of strategy; a new kind starts from its defaults.
-    ...(!kindChanged && base.genes ? { genes: base.genes } : {}),
-    ...(!kindChanged && base.genome ? { genome: base.genome } : {}),
+    note,
+    // Tuned genes (without a book genome) stay with the same kind of strategy; a new kind starts from its defaults.
+    ...(!kindChanged && base.genes && !base.genome ? { genes: base.genes } : {}),
   };
 }
 
@@ -469,6 +503,7 @@ function closeAt(trader: Trader, pos: Position, exec: Executor, now: number, rea
       ...(fill.mid && fill.mid !== px ? { mid: fill.mid, cost: fill.cost } : {}),
       ...(pos.qty ? { qty: pos.qty } : {}),
       ...(own ? { own } : {}),
+      ...(pos.genomeId ? { genomeId: pos.genomeId } : {}),
     },
   };
 }
@@ -499,6 +534,7 @@ function openAt(
   };
   if (open.own) position.own = open.own;
   if (open.genes) position.genes = open.genes;
+  if (open.genomeId) position.genomeId = open.genomeId;
   return {
     trader: { ...trader, balance: trader.balance - fee, position, trades: (trader.trades ?? 0) + 1 },
     event: {
@@ -591,7 +627,7 @@ export function tradeStep(
   if (stake <= 0 || gate(best.coin, stake)) return { trader, event: null };
   return openAt(
     trader,
-    { coin: best.coin, side: best.sig.side, stake, reason: best.sig.reason, by: st.kind, sl: st.stopLossPct, genes: genesOf(st), ...(st.genome ? { genomeId: st.genome.id } : {}) },
+    { coin: best.coin, side: best.sig.side, stake, reason: best.sig.reason, by: st.kind, sl: st.stopLossPct, genes: genesOf(st), ...(st.genome ? { genomeId: st.genome.book ?? st.genome.id } : {}) },
     now,
     exec,
   );

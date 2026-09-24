@@ -19,9 +19,10 @@ import { councilStrategies, isLiving, wealthLine } from "./review.server";
 import { Journal, KING, MARKET, villagerAccount, withPostings } from "./ledger";
 import { strategyChanges } from "./paper";
 import { advanceSeason, checkMilestones, parishWealth, SEASONS_KEPT, type DawnBook } from "./progress";
-import { unrealized } from "./strategies";
+import { trainNewcomer } from "./lab";
+import { BAR_LABEL, defaultStrategy, genesOf, unrealized } from "./strategies";
 import { coinsNeeded } from "./trade.server";
-import { settleDay } from "./trading";
+import { settleDay, temperOf } from "./trading";
 import { GALLOWS_DROP } from "./town";
 import type { GameState, King, Subject } from "./types";
 import { makeSubject, pushLog, withTotals } from "./world";
@@ -124,12 +125,18 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   const taken = new Set(settled.map((x) => x.firstName));
   for (let i = 0; i < count; i++) {
     const child = makeSubject(rng, taken, stake, day);
+    // Each newcomer is trained in a slightly adjusted copy of the guild book's best.
+    const trained = trainNewcomer(prev.lab?.pool ?? [], rng, defaultStrategy(child.id, child.temper ?? temperOf(child.id), []));
+    if (trained) child.strategy = trained;
     child.dayStart = stake;
     kingBalance -= stake;
     book.stakes += stake;
     journal.transfer(KING, villagerAccount(child.id), stake, "stake", { memo: `${child.firstName} opened from the treasury` });
     settled.push(child);
-    push("crown", `The King opens ${child.firstName} from the treasury, staked for trade.`);
+    push(
+      "crown",
+      `The King opens ${child.firstName} from the treasury, staked for trade${trained ? ` and trained in the guild's ${trained.kind} (${trained.genome?.book}, ${BAR_LABEL[genesOf(trained).bar]} bars)` : ""}.`,
+    );
   }
 
   // The strategy council for the new day.

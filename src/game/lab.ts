@@ -14,8 +14,11 @@
  *   - fitness is the t-statistic of per-trade returns after every cost
  *     (fee, spread, slippage), with a minimum number of trades, so a few
  *     lucky trades can't win;
+ *   - breeding rewards consistency: a genome scores by the worse of the two
+ *     halves of the training data, so one lucky stretch can't carry it;
  *   - "proven" means it made money on train, validation AND test, with
- *     enough trades on each, a profit factor above 1, and still made money
+ *     enough trades on each, a profit factor above 1, validation and test
+ *     together clearly positive (t ≥ PROVEN_OOS_T), and still made money
  *     on validation with costs 50% higher than expected.
  * Even so, many niches are tried, so one may pass by chance; live paper
  * results (`recordLive`) are the final judge, and a genome that does badly
@@ -29,6 +32,7 @@ import {
   LONG_ONLY,
   STRATEGY_INFO,
   STRATEGY_KINDS,
+  fromBook,
   warmupOf,
   type Bar,
   type Genes,
@@ -306,10 +310,34 @@ export function fitness(s: Score, need: number): number {
   return s.t - Math.max(0, s.maxDd - 0.25) * 10;
 }
 
-/** Proven: made money on all three slices with enough trades, and survived higher costs. */
+/** The t-statistic of two slices' per-trade returns taken together. */
+export function pooledT(a: Score, b: Score): number {
+  const parts = [a, b].filter((s) => s.trades > 1);
+  let n = 0;
+  let sum = 0;
+  let sumSq = 0;
+  for (const s of parts) {
+    const sd = s.t !== 0 ? Math.abs((s.avg * Math.sqrt(s.trades)) / s.t) : 0;
+    n += s.trades;
+    sum += s.avg * s.trades;
+    sumSq += (s.trades - 1) * sd * sd + s.trades * s.avg * s.avg;
+  }
+  if (n < 2) return 0;
+  const mean = sum / n;
+  const sd = Math.sqrt(Math.max(0, (sumSq - n * mean * mean) / (n - 1)));
+  return sd > 0 ? round((mean / sd) * Math.sqrt(n), 3) : 0;
+}
+
+/** Out-of-sample evidence a proven strategy needs: validation and test together at least this t. */
+export const PROVEN_OOS_T = 1.5;
+
+/**
+ * Proven: made money on all three slices with enough trades, the unseen
+ * slices together clearly (not by a whisker), and survived higher costs.
+ */
 export function isProven(e: Pick<PoolEntry, "train" | "val" | "test" | "stress">): boolean {
   const ok = (s: Score, slice: "train" | "val" | "test") => s.trades >= minTrades(s.days, slice) && s.ret > 0 && s.avg > 0 && (s.pf ?? 0) > 1;
-  return ok(e.train, "train") && ok(e.val, "val") && ok(e.test, "test") && e.stress.ret > 0;
+  return ok(e.train, "train") && ok(e.val, "val") && ok(e.test, "test") && e.stress.ret > 0 && pooledT(e.val, e.test) >= PROVEN_OOS_T;
 }
 
 /** The t-statistic of live per-trade returns (a steady loss counts as strongly negative). */
@@ -365,13 +393,15 @@ export function evolveNiche(grid: Grid, niche: Niche, opts: EvolveOpts): NicheRe
   const sl = slices(grid.t.length);
   const days = (s: [number, number]) => ((s[1] - s[0]) * (grid.barMs ?? 300_000)) / 86_400_000;
   const need = minTrades(days(sl.train), "train");
-  const cache = new Map<string, { g: Genome; train: Score; fit: number }>();
+  const mid = Math.floor((sl.train[0] + sl.train[1]) / 2);
+  const cache = new Map<string, { g: Genome; halves: [Score, Score]; fit: number }>();
+  // Scored by the worse half of the training data: a strategy must work in both.
   const judge = (g: Genome) => {
     const k = keyOf(g);
     let hit = cache.get(k);
     if (!hit) {
-      const train = evaluate(grid, g, sl.train, opts);
-      hit = { g, train, fit: fitness(train, need) };
+      const halves: [Score, Score] = [evaluate(grid, g, [sl.train[0], mid], opts), evaluate(grid, g, [mid, sl.train[1]], opts)];
+      hit = { g, halves, fit: Math.min(fitness(halves[0], need / 2), fitness(halves[1], need / 2)) * Math.SQRT2 };
       cache.set(k, hit);
     }
     return hit;
@@ -412,8 +442,8 @@ export function evolveNiche(grid: Grid, niche: Niche, opts: EvolveOpts): NicheRe
   }
 
   const all = [...cache.values()].sort((a, b) => b.fit - a.fit);
-  const finalists = all.filter((x) => x.train.trades >= need && x.train.avg > 0).slice(0, opts.finalists ?? 6);
-  const judged = finalists.map((x) => ({ ...x, val: evaluate(grid, x.g, sl.val, opts) }));
+  const finalists = all.filter((x) => x.fit > 0).slice(0, opts.finalists ?? 6);
+  const judged = finalists.map((x) => ({ ...x, train: evaluate(grid, x.g, sl.train, opts), val: evaluate(grid, x.g, sl.val, opts) }));
   judged.sort((a, b) => b.val.t - a.val.t);
   const entry = (x: (typeof judged)[number]): PoolEntry => {
     const test = evaluate(grid, x.g, sl.test, opts);
@@ -426,7 +456,7 @@ export function evolveNiche(grid: Grid, niche: Niche, opts: EvolveOpts): NicheRe
   const champion = judged[0] ? entry(judged[0]) : null;
   // The test slice is looked at for the champion, and for runners-up only once they're chosen on validation.
   const runnersUp = judged.slice(1).filter((x) => x.val.ret > 0 && x.val.trades >= minTrades(x.val.days, "val")).slice(0, 2).map(entry);
-  const baseline = { train: judge(base).train, val: evaluate(grid, base, sl.val, opts), test: evaluate(grid, base, sl.test, opts) };
+  const baseline = { train: evaluate(grid, base, sl.train, opts), val: evaluate(grid, base, sl.val, opts), test: evaluate(grid, base, sl.test, opts) };
   return { niche, evaluated: cache.size, generations: gens, champion, runnersUp, baseline, curve };
 }
 
@@ -448,7 +478,9 @@ export function mergePool(book: PoolEntry[], found: PoolEntry[], at: number): Po
     merged.score = rankScore(merged);
     byKey.set(keyOf(f), merged);
   }
-  return [...byKey.values()].sort((a, b) => Number(!!a.retired) - Number(!!b.retired) || b.score - a.score).slice(0, POOL_MAX);
+  // A genome not found again for three weeks, and never traded live, leaves the book.
+  const fresh = [...byKey.values()].filter((e) => e.at >= at - 21 * 86_400_000 || (e.live?.trades ?? 0) > 0);
+  return fresh.sort((a, b) => Number(!!a.retired) - Number(!!b.retired) || b.score - a.score).slice(0, POOL_MAX);
 }
 
 /** Closed trades by genome, from the events of a tick, folded into the book's live records. Bad live records retire. */
@@ -492,6 +524,26 @@ export function pickForSpawn(book: PoolEntry[], r: () => number, kind?: Strategy
   while (k < from.length - 1 && (x -= w[k]!) > 0) k++;
   const parent = from[k]!;
   return mutate(r, { id: parent.id, kind: parent.kind, genes: parent.genes, tp: parent.tp, sl: parent.sl, shorts: parent.shorts, gen: parent.gen, parent: parent.parent }, 0.06);
+}
+
+/**
+ * A newcomer's strategy from the book: `want` may name a book entry (by id)
+ * or a kind of strategy; otherwise the best of the book. Always a slightly
+ * adjusted copy, so the parish keeps exploring around what works. Null when
+ * the book has nothing worth training in (the newcomer keeps its
+ * temperament's strategy).
+ */
+export function trainNewcomer(book: PoolEntry[], r: () => number, base: Pick<Strategy, "coins" | "sizePct" | "note">, want?: string | null): Strategy | null {
+  const w = (want ?? "").trim().toLowerCase();
+  const named = w ? book.find((e) => e.id.toLowerCase() === w && !e.retired) : undefined;
+  const kind = STRATEGY_KINDS.find((k) => k === w);
+  const child = named
+    ? mutate(r, { id: named.id, kind: named.kind, genes: named.genes, tp: named.tp, sl: named.sl, shorts: named.shorts, gen: named.gen, parent: named.parent }, 0.06)
+    : pickForSpawn(book, r, kind);
+  if (!child) return null;
+  const from = book.find((e) => e.id === child.parent);
+  if (!from) return null;
+  return fromBook({ ...from, genes: child.genes, tp: child.tp, sl: child.sl, shorts: child.shorts }, base, { id: child.id, parent: from.id, gen: child.gen });
 }
 
 /** Genomes in the book for one niche (to seed the next run). */

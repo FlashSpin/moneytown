@@ -148,8 +148,8 @@ async function main() {
   const daysH = Number(env.DAYS_1H || 365);
   const minutes = Number(env.LAB_MINUTES || 30);
   const seed = Number(env.SEED || Math.floor(Date.now() / 86_400_000));
-  const population = Number(env.POPULATION || 32);
-  const generations = Number(env.GENERATIONS || 25);
+  const population = Number(env.POPULATION || 40);
+  const generations = Number(env.GENERATIONS || 40);
   const started = Date.now();
 
   console.log(`Strategy lab — ${coins.length} coins, ${days5} days of 5-minute and ${daysH} days of hourly candles, ${minutes} min budget, seed ${seed}`);
@@ -207,7 +207,7 @@ async function main() {
   const lines: string[] = [];
   lines.push(`## Strategy lab — ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC`);
   lines.push("");
-  lines.push(`${results.reduce((n, r) => n + r.evaluated, 0)} strategies backtested across ${results.length} niches on ${Object.keys(m5).length} coins. **${proven.length} proven** (made money on train, validation and the untouched test data, and with 1.5× costs).`);
+  lines.push(`${results.reduce((n, r) => n + r.evaluated, 0)} strategies backtested across ${results.length} niches on ${Object.keys(m5).length} coins. **${proven.length} proven** (made money on train, validation and the untouched test data — the last two together clearly — and with 1.5× costs).`);
   lines.push("");
   lines.push("| Niche | Champion | Train | Validation | Test | Usual settings, test | Proven |");
   lines.push("|---|---|---|---|---|---|---|");

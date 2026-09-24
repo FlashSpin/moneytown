@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { candleGrid, type Candle } from "./backtest.ts";
-import { cleanEntry, defaultGenome, evolveNiche, fix, isProven, MAX_WARMUP, mergePool, mutate, pickForSpawn, randomGenome, recordLive, rng, type PoolEntry, type Score } from "./lab.ts";
-import { BARS, DEFAULT_GENES, STRATEGY_KINDS, warmupOf } from "./strategies.ts";
+import { cleanEntry, defaultGenome, evolveNiche, fix, isProven, MAX_WARMUP, mergePool, mutate, pickForSpawn, randomGenome, recordLive, rng, trainNewcomer, type PoolEntry, type Score } from "./lab.ts";
+import { BARS, cleanStrategy, DEFAULT_GENES, STRATEGY_KINDS, warmupOf } from "./strategies.ts";
 
 /** Candles for `n` coins: a random walk, with `drift` adding trends that persist. */
 function market(n: number, bars: number, barMs: number, drift: number, seed = 5): Record<string, Candle[]> {
@@ -120,5 +120,36 @@ describe("the guild book", () => {
       assert.equal(g.parent, "bre-y");
     }
     assert.equal(pickForSpawn(book, r, "scalp"), null);
+  });
+});
+
+describe("training newcomers", () => {
+  it("trains in a book strategy by id or kind, crediting live results to the book entry", () => {
+    const r = rng(11);
+    const book = [entry({ id: "bre-y" }), { ...entry({ id: "tre-q" }), ...defaultGenome("trend", 48), id: "tre-q", score: 6 }];
+    const base = { coins: [], sizePct: 0.25 };
+    const byKind = trainNewcomer(book, r, base, "trend")!;
+    assert.equal(byKind.kind, "trend");
+    assert.equal(byKind.genome?.book, "tre-q");
+    assert.equal(byKind.genes?.bar, 48);
+    assert.equal(byKind.sizePct, 0.25);
+    const byId = trainNewcomer(book, r, base, "bre-y")!;
+    assert.equal(byId.genome?.book, "bre-y");
+    assert.notEqual(byId.genome?.id, "bre-y", "a slightly adjusted copy");
+    assert.equal(trainNewcomer([], r, base), null);
+  });
+
+  it("keeps a book strategy through the council unless told otherwise", () => {
+    const book = [entry({ id: "bre-y" })];
+    const st = trainNewcomer(book, rng(1), { coins: [], sizePct: 0.3 })!;
+    const kept = cleanStrategy({ kind: "breakout", tp: 9, sl: 9, size: 20 }, st, ["BTC"], book);
+    assert.deepEqual(kept.genes, st.genes);
+    assert.equal(kept.takeProfitPct, st.takeProfitPct, "the AI's targets don't detune it");
+    assert.equal(kept.sizePct, 0.2);
+    const left = cleanStrategy({ kind: "scalp" }, st, ["BTC"], book);
+    assert.equal(left.genome, undefined);
+    const chosen = cleanStrategy({ genome: "bre-y" }, { kind: "scalp", coins: [], sizePct: 0.3, takeProfitPct: 1, stopLossPct: 1, shorts: true }, ["BTC"], book);
+    assert.equal(chosen.kind, "breakout");
+    assert.equal(chosen.genome?.book, "bre-y");
   });
 });

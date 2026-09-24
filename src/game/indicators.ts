@@ -82,7 +82,14 @@ export type Ticks = {
   seen?: Record<string, number>;
   /** A price that jumped too far to trust yet, per coin — accepted if the next tick confirms it. */
   suspect?: Record<string, number>;
+  /** Hourly closes per coin, for strategies on longer bars (`appendHourly`). */
+  h?: Record<string, Hourly>;
+  /** When each coin's hourly history was last filled from exchange candles. */
+  hSeeded?: Record<string, number>;
 };
+
+/** One close per hour, oldest first: px[k] closes the hour starting t0 + k hours; the last may still be forming. */
+export type Hourly = { t0: number; px: number[] };
 
 /** A move bigger than this between two ticks is held back until the next tick confirms it. */
 export const MAX_JUMP = 0.25;
@@ -171,6 +178,102 @@ export function tradingSeries(ticks: Ticks | undefined, coin: string, now: numbe
 export function priceFresh(ticks: Ticks | undefined, coin: string, now: number, maxGap = MAX_GAP_MS): boolean {
   const seen = ticks?.seen?.[coin];
   return seen !== undefined ? now - seen <= maxGap : false;
+}
+
+// ── Longer bars: 15-minute, hourly and 4-hour closes ───────────────────────
+
+export const HOUR_MS = 3_600_000;
+/** Hourly closes kept per coin: 10 days (60 four-hour bars). */
+export const HOURS_KEPT = 240;
+/** Up to this many missing hours are filled with the last close; a longer gap starts the series again. */
+const HOUR_GAP_FILL = 3;
+
+function trimHourly(e: Hourly, keep: number): Hourly {
+  const drop = e.px.length - keep;
+  return drop > 0 ? { t0: e.t0 + drop * HOUR_MS, px: e.px.slice(drop) } : e;
+}
+
+/** Put one price into a coin's hourly closes at time `t`: the forming hour takes the latest price. */
+export function hourlyWith(e: Hourly | undefined, t: number, p: number, keep = HOURS_KEPT): Hourly {
+  const hour = Math.floor(t / HOUR_MS) * HOUR_MS;
+  if (!e || !e.px.length) return { t0: hour, px: [p] };
+  const last = e.t0 + (e.px.length - 1) * HOUR_MS;
+  if (hour < last) return e;
+  if (hour === last) return { t0: e.t0, px: [...e.px.slice(0, -1), p] };
+  const gap = (hour - last) / HOUR_MS;
+  if (gap > HOUR_GAP_FILL + 1) return { t0: hour, px: [p] };
+  const fill = Array<number>(gap - 1).fill(e.px[e.px.length - 1]!);
+  return trimHourly({ t0: e.t0, px: [...e.px, ...fill, p] }, keep);
+}
+
+/** Record a tick's prices into the hourly closes; coins unpriced for two days are dropped. */
+export function appendHourly(h: Ticks["h"], t: number, prices: Record<string, number>, keep = HOURS_KEPT): NonNullable<Ticks["h"]> {
+  const out: NonNullable<Ticks["h"]> = {};
+  for (const [coin, e] of Object.entries(h ?? {})) if (e.t0 + e.px.length * HOUR_MS > t - 48 * HOUR_MS) out[coin] = e;
+  for (const [coin, p] of Object.entries(prices)) if (p > 0 && Number.isFinite(p)) out[coin] = hourlyWith(out[coin], t, p, keep);
+  return out;
+}
+
+/** Fill a coin's hourly closes from exchange candles (closed hours), keeping any later hours already recorded. */
+export function seedHourly(e: Hourly | undefined, candles: { t: number; close: number }[], keep = HOURS_KEPT): Hourly | undefined {
+  let out: Hourly | undefined;
+  for (const c of [...candles].sort((a, b) => a.t - b.t)) if (c.close > 0) out = hourlyWith(out, c.t, c.close, keep);
+  if (!out) return e;
+  if (e) {
+    const seededLast = out.t0 + (out.px.length - 1) * HOUR_MS;
+    e.px.forEach((p, k) => {
+      const t = e.t0 + k * HOUR_MS;
+      if (t > seededLast) out = hourlyWith(out, t, p, keep);
+    });
+  }
+  return trimHourly(out, keep);
+}
+
+/** Hours of closed history a coin has. */
+export function hoursOf(ticks: Ticks | undefined, coin: string): number {
+  return Math.max(0, (ticks?.h?.[coin]?.px.length ?? 0) - 1);
+}
+
+/**
+ * The series a strategy on `bar`-sized bars trades on at `now`: 5-minute
+ * ticks as they are (`tradingSeries`), or the closes of 15-minute, hourly or
+ * 4-hour bars that have finished — never the one still forming, so live
+ * trading sees what the lab's backtests saw. Nothing when the price is stale.
+ */
+export function seriesForBar(ticks: Ticks | undefined, coin: string, bar: 1 | 3 | 12 | 48, now: number): number[] {
+  if (bar === 1) return tradingSeries(ticks, coin, now);
+  if (bar === 3) {
+    const px = tradingSeries(ticks, coin, now);
+    if (!px.length || !ticks) return [];
+    const t = ticks.t.slice(-px.length);
+    const size = 15 * 60_000;
+    const current = Math.floor(now / size);
+    const out: number[] = [];
+    let bucket = -1;
+    for (let k = 0; k < px.length; k++) {
+      const b = Math.floor(t[k]! / size);
+      if (b >= current) break;
+      if (b === bucket) out[out.length - 1] = px[k]!;
+      else out.push(px[k]!);
+      bucket = b;
+    }
+    return out;
+  }
+  if (!priceFresh(ticks, coin, now)) return [];
+  const e = ticks?.h?.[coin];
+  if (!e?.px.length) return [];
+  const current = Math.floor(now / HOUR_MS) * HOUR_MS;
+  // The hourly series must reach the last closed hour, or it is stale.
+  const lastClosed = current - HOUR_MS;
+  const lastT = e.t0 + (e.px.length - 1) * HOUR_MS;
+  if (lastT < lastClosed) return [];
+  const closedN = lastT >= current ? e.px.length - (lastT - current) / HOUR_MS - 1 : e.px.length;
+  const closed = e.px.slice(0, Math.max(0, closedN));
+  if (bar === 12) return closed;
+  // 4-hour bars close with the hour that ends at 04:00, 08:00, … UTC.
+  const out: number[] = [];
+  for (let k = 0; k < closed.length; k++) if ((e.t0 + (k + 1) * HOUR_MS) % (4 * HOUR_MS) === 0) out.push(closed[k]!);
+  return out;
 }
 
 /** A compact read of one coin for the King and the villagers' council. */

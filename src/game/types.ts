@@ -194,6 +194,8 @@ export type GameState = {
   lastDawn?: import("./progress.ts").DawnBook;
   /** Coins whose big move has been chronicled today. */
   marketNotes?: { day: number; coins: string[] };
+  /** The guild book: strategies bred and judged by the strategy lab (./lab.ts), with their live results. */
+  lab?: { at: number; runs: number; pool: import("./lab.ts").PoolEntry[] };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset; paused?: import("./strategies.ts").StrategyKind[] };
 };

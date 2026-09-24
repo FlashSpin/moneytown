@@ -12,6 +12,8 @@ export type DecreeChange<T> = T | "auto" | null;
 
 export type Command = {
   summon: number;
+  /** What the summoned should trade: a guild-book id or a strategy kind (null = the book's best). */
+  summonAs: string | null;
   banish: string[];
   /** Tax as a fraction 0..TAX_MAX. */
   taxRate: DecreeChange<number>;
@@ -66,6 +68,7 @@ export function parseFavor(v: unknown, coins: Asset[]): DecreeChange<Asset> {
 export function parseCommand(
   obj: {
     summon?: unknown;
+    summonAs?: unknown;
     banish?: unknown;
     taxRate?: unknown;
     favorAsset?: unknown;
@@ -85,6 +88,7 @@ export function parseCommand(
       : [];
   return {
     summon: Number.isFinite(summon) ? Math.max(0, Math.floor(summon)) : 0,
+    summonAs: typeof obj.summonAs === "string" && /^[a-z0-9-]{3,32}$/i.test(obj.summonAs.trim()) ? obj.summonAs.trim() : null,
     banish,
     taxRate: parseTaxPercent(obj.taxRate),
     favorAsset: parseFavor(obj.favorAsset, coins),

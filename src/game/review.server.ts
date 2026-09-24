@@ -62,6 +62,7 @@ export async function councilStrategies(
         tape,
         ticks: state.ticks,
         souls,
+        book: state.lab?.pool,
       })
     : null;
 
@@ -70,7 +71,7 @@ export async function councilStrategies(
   const advice = new Map<string, Choice>(souls.map((s) => [s.id, council?.advice.get(s.id) ?? s.strategy]));
 
   const parish = living.length
-    ? await parishCouncil({ day: state.day, tape, ticks: state.ticks, kingPlan, advice, souls })
+    ? await parishCouncil({ day: state.day, tape, ticks: state.ticks, kingPlan, advice, souls, book: state.lab?.pool })
     : null;
 
   const counts = new Map<string, number>();

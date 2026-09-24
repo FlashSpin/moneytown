@@ -1940,3 +1940,87 @@ summary.trade-row:hover {
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+/* ── Paper trading (/paper) ─────────────────────────────────────────────── */
+.readiness-gates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.rgate {
+  --tone: var(--color-ok);
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.rgate svg {
+  color: var(--tone);
+  margin-top: 2px;
+}
+
+.rgate-fail {
+  --tone: var(--color-bad);
+}
+
+.rgate-manual {
+  --tone: var(--color-warn);
+}
+
+.rgate-detail {
+  display: block;
+  color: var(--color-ink-soft);
+}
+
+.bt-stats-wide {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.bt-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.actions > :last-child:nth-child(odd) {
+  grid-column: span 2;
+}
+
+/* ── Strategy lab ─────────────────────────────────────────────────────── */
+
+.lab-verdict {
+  display: inline-grid;
+  white-space: nowrap;
+}
+
+.lab-id {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--color-ink-soft);
+}
+
+.lab-genes {
+  display: block;
+  font-weight: 400;
+  max-width: 34ch;
+}
+
+.lab-history,
+.lab-method {
+  margin: var(--space-3) 0 var(--space-2);
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.lab-table {
+  min-width: 760px;
+}

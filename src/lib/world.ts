@@ -8,5 +8,5 @@ import type { GameState } from "@/game/types";
 export const getWorldState = createServerFn({ method: "POST" }).handler(async (): Promise<GameState> => {
   const { loadWorldRow } = await import("./world.server");
   const row = await loadWorldRow();
-  return { ...row.state, ticks: undefined, postings: undefined };
+  return { ...row.state, ticks: undefined, postings: undefined, paperOrders: undefined, strategyChanges: undefined };
 });

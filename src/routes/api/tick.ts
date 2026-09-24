@@ -42,7 +42,8 @@ async function tick(request: Request): Promise<Response> {
         // Once a day, drop price history and job runs past their retention.
         const { pruneHistory } = await import("@/lib/history.server");
         const { pruneJobRuns } = await import("@/lib/jobs.server");
-        await Promise.all([pruneHistory(), pruneJobRuns()]).catch((e: unknown) =>
+        const { prunePaperOrders } = await import("@/lib/paper.server");
+        await Promise.all([pruneHistory(), pruneJobRuns(), prunePaperOrders()]).catch((e: unknown) =>
           log("warn", "dawn.prune_failed", { requestId, error: e instanceof Error ? e.message : String(e) }),
         );
         const living = next.subjects.filter((s) => s.state !== "condemned" && s.state !== "hanging").length;

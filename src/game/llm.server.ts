@@ -21,9 +21,12 @@ import { trimSpeech } from "./brains";
 import { coinStats, seriesOf, type Ticks } from "./indicators";
 import { describeKnowledge, type Knowledge } from "./knowledge";
 import { MAX_RISK, MIN_EDGE, TRADING_COST_PCT } from "./risk";
+import { describe as describeGenome, type PoolEntry } from "./lab";
 import {
+  BAR_LABEL,
   cleanStrategy,
   coinsLabel,
+  genesOf,
   FEE_RATE,
   STRATEGY_INFO,
   STRATEGY_KINDS,
@@ -130,8 +133,25 @@ const MENU = STRATEGY_KINDS.map(
   (k) => `- ${k}: ${STRATEGY_INFO[k].about} (typical take-profit ${STRATEGY_INFO[k].tp}%, stop-loss ${STRATEGY_INFO[k].sl}%)`,
 ).join("\n");
 
+/**
+ * The guild book for the councils: the lab's strategies that held up on data
+ * they never saw, best first. A villager given one by id trades its tuned
+ * genes and targets.
+ */
+function bookBlock(book: PoolEntry[] | undefined): string {
+  const open = (book ?? []).filter((e) => !e.retired && (e.proven || (e.val.ret > 0 && e.test.ret > 0))).slice(0, 8);
+  if (!open.length) return "";
+  const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+  const rows = open.map((e) => {
+    const live = e.live?.trades ? `; live ${e.live.trades} trades, avg ${pct(e.live.sum / e.live.trades)} a trade` : "";
+    return `- ${e.id}${e.proven ? " (PROVEN)" : ""}: ${describeGenome(e)} — unseen test ${pct(e.test.ret)} over ${e.test.trades} trades, win ${Math.round(e.test.winRate * 100)}%${live}`;
+  });
+  return `\nThe guild book — strategies bred by the strategy lab on months of real prices and judged on data they never saw (PROVEN = made money on every slice and with higher costs). To train a villager in one, give its id as "genome" (its genes and targets come with it; your tp/sl are then ignored). Prefer them for struggling villagers; leave winners be:\n${rows.join("\n")}\n`;
+}
+
 function describeStrategy(s: Strategy): string {
-  return `${s.kind} on ${coinsLabel(s)}, ${Math.round(s.sizePct * 100)}% per trade, TP ${s.takeProfitPct}% SL ${s.stopLossPct}%${
+  const book = s.genome ? ` [guild book ${s.genome.book ?? s.genome.id}, ${BAR_LABEL[genesOf(s).bar]} bars]` : "";
+  return `${s.kind}${book} on ${coinsLabel(s)}, ${Math.round(s.sizePct * 100)}% per trade, TP ${s.takeProfitPct}% SL ${s.stopLossPct}%${
     s.shorts ? ", may short" : ", long only"
   }`;
 }
@@ -155,7 +175,7 @@ function rosterRows(souls: CouncilSoul[], tape: Tape, gbp: (sats: number) => str
     .join("\n");
 }
 
-const STRATEGY_JSON = `{"id":"...","kind":"${STRATEGY_KINDS.join("|")}","coins":"all" or ["COIN",...],"size":25,"tp":2,"sl":1.2,"shorts":true`;
+const STRATEGY_JSON = `{"id":"...","genome":"a guild book id (optional)","kind":"${STRATEGY_KINDS.join("|")}","coins":"all" or ["COIN",...],"size":25,"tp":2,"sl":1.2,"shorts":true`;
 
 const COIN_RULE =
   'coins: "all" (recommended — the strategy scans every coin in the market each tick and takes the strongest signal, skipping coins the villager has learned lose it money) or a focus list of any market coins';
@@ -171,6 +191,7 @@ function councilPrompt(input: {
   tape: Tape;
   ticks?: Ticks;
   souls: CouncilSoul[];
+  book?: PoolEntry[];
 }): string {
   const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(input.tape)));
   const tax = Math.round(input.taxRate * 100);
@@ -189,7 +210,7 @@ How the money works:
 
 The strategies:
 ${MENU}
-
+${bookBlock(input.book)}
 Match strategy to market: momentum/breakout/trend when coins trend (big 1h/4h moves), reversion when they chop around (RSI extremes, moves that reverse), scalp only on liquid, steady coins. ${COIN_RULE}; focus only when the villager's own record or the market gives a clear reason. Learn from each villager's record: steer it towards the coins and approaches that have paid it and away from those that haven't. ${SIZING} Fit each villager's temperament. Give struggling villagers (losing records) a change of approach; leave winning ones alone. Spread the parish across coins and strategies.${
     input.favorFixed ? `\nThe bearer of the royal seal favours ${input.favorAsset}: include it where it fits.` : ""
   }
@@ -239,7 +260,7 @@ function parseTalks(raw: unknown, ids: Set<string>, rng: () => number): SpeechLi
 }
 
 /** The AI's strategies per villager, tidied (known ids, known kinds, listed coins, sane numbers). */
-function parseStrategies(raw: unknown, souls: CouncilSoul[], tape: Tape): Map<string, Choice> {
+function parseStrategies(raw: unknown, souls: CouncilSoul[], tape: Tape, book: PoolEntry[] = []): Map<string, Choice> {
   const out = new Map<string, Choice>();
   if (!Array.isArray(raw)) return out;
   const byId = new Map(souls.map((s) => [s.id, s]));
@@ -250,7 +271,7 @@ function parseStrategies(raw: unknown, souls: CouncilSoul[], tape: Tape): Map<st
     const soul = byId.get(String(r.id ?? ""));
     if (!soul || out.has(soul.id)) continue;
     const lesson = typeof r.lesson === "string" ? r.lesson.trim() : "";
-    out.set(soul.id, { ...cleanStrategy(r, soul.strategy, market), followsKing: r.followsKing !== false, ...(lesson ? { lesson } : {}) });
+    out.set(soul.id, { ...cleanStrategy(r, soul.strategy, market, book), followsKing: r.followsKing !== false, ...(lesson ? { lesson } : {}) });
   }
   return out;
 }
@@ -269,7 +290,7 @@ export async function kingCouncil(input: Parameters<typeof councilPrompt>[0]): P
     const taxN = Number(obj.taxRate);
     return {
       say: String(obj.say ?? "").replace(/\s+/g, " ").trim().slice(0, 280),
-      advice: parseStrategies(obj.advice ?? obj.orders, input.souls, input.tape),
+      advice: parseStrategies(obj.advice ?? obj.orders, input.souls, input.tape, input.book),
       taxRate: input.dawn && Number.isFinite(taxN) ? clamp(taxN > 1 ? taxN / 100 : taxN, TAX_MIN, TAX_MAX) : undefined,
       favorAsset: input.dawn ? (asAsset(obj.favorAsset, input.tape) ?? undefined) : undefined,
       brain: { kind: res.source, label: BRAIN_LABELS[res.source] },
@@ -295,6 +316,7 @@ function parishPrompt(input: {
   kingPlan: string;
   advice: Map<string, Strategy>;
   souls: CouncilSoul[];
+  book?: PoolEntry[];
 }): string {
   const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(input.tape)));
   const people = input.souls
@@ -308,6 +330,7 @@ function parishPrompt(input: {
 
 The strategies:
 ${MENU}
+${bookBlock(input.book)}
 Every fill pays a ${(FEE_RATE * 100).toFixed(1)}% fee plus the spread and slippage (about ${TRADING_COST_PCT.toFixed(2)}% a round trip).
 
 Markets (5-minute data):
@@ -339,7 +362,7 @@ export async function parishCouncil(input: Parameters<typeof parishPrompt>[0]): 
     const obj = extractJson(res.text) as { discussion?: unknown; talk?: unknown; decisions?: unknown };
     const ids = new Set(input.souls.map((s) => s.id));
     return {
-      decisions: parseStrategies(obj.decisions, input.souls, input.tape),
+      decisions: parseStrategies(obj.decisions, input.souls, input.tape, input.book),
       talks: parseTalks(obj.discussion ?? obj.talk, ids, Math.random),
       brain: { kind: res.source, label: BRAIN_LABELS[res.source] },
     };

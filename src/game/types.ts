@@ -173,6 +173,9 @@ export type GameState = {
    * ledger in the same statement as the world, then dropped (src/lib/world.server.ts).
    */
   postings?: import("./ledger.ts").Posting[];
+  /** Paper orders and strategy changes made by this change, not yet saved (written with the world, then dropped). */
+  paperOrders?: import("./paper.ts").PaperOrder[];
+  strategyChanges?: import("./paper.ts").StrategyChange[];
   /** The ledger: when it opened, and the latest check of every purse against it. */
   ledger?: { since: number; check?: import("./ledger.ts").Reconciliation };
   /** Trading halted: no new trades open (open ones are still managed). Set by the seal-bearer or a failed ledger check. */
@@ -191,6 +194,8 @@ export type GameState = {
   lastDawn?: import("./progress.ts").DawnBook;
   /** Coins whose big move has been chronicled today. */
   marketNotes?: { day: number; coins: string[] };
+  /** The guild book: strategies bred and judged by the strategy lab (./lab.ts), with their live results. */
+  lab?: { at: number; runs: number; pool: import("./lab.ts").PoolEntry[] };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
   decree?: { taxRate?: number; favorAsset?: Asset; paused?: import("./strategies.ts").StrategyKind[] };
 };

@@ -11,6 +11,7 @@ How the parish keeps running, how to tell when it isn't, and what to do about it
 | Strategy review | `POST /api/review` (Bearer) | GitHub Actions `king-review.yml` | every 4 h | skips if < 3 h since the last |
 | Dawn | `GET /api/tick` (Bearer) | Vercel Cron (`vercel.json`) | daily 06:00 UTC | skips if < 20 h; a day can only advance once (row must still be on the previous day) |
 | Backtest | `POST /api/backtest` (Bearer) | GitHub Actions `backtest.yml` | weekly, or by hand | — |
+| Strategy lab | `POST /api/lab` (Bearer) | GitHub Actions `strategy-lab.yml` (main branch only) | daily 04:23 UTC, or by hand | — |
 
 Every run is timed, logged as one JSON line (`trade.start`, `trade.end`, `dawn.end`, …) with a `requestId`,
 and stored in `job_runs` (skips aren't stored). Responses carry the same id in `x-request-id`.
@@ -85,6 +86,10 @@ migrations only ever add tables, columns and indexes, so rolling the code back i
 | `job_runs` | 30 days | dawn |
 | `ledger_entries` | forever (append-only; ~400 rows a day at full trading) | — |
 | `backtest_runs` | forever (a few per week) | — |
+| `lab_runs` | forever (one a day) | — |
+| guild book (`state.lab.pool`) | best 40; a genome not found again for 21 days and never traded live leaves | each lab run |
+| `paper_orders` | 1 year | dawn |
+| `strategy_changes` | forever (a few per review) | — |
 | trading floor / chronicle in the world | last 60 fills / 80 entries | every save |
 
 ## Performance notes
@@ -155,3 +160,55 @@ Dependabot alerts in the repository settings as well.
 This is a paper-trading game. A real exchange connection would need its own review first — see
 `docs/real-money-kraken.md`: a key with trade-only permission (**never withdrawal**), an IP allow-list,
 kept only on the server, and separate from the game.
+
+## The strategy lab
+
+`.github/workflows/strategy-lab.yml` runs `scripts/strategy-lab.ts` on GitHub's runners (they can reach the
+exchanges): it fetches 60 days of 5-minute and a year of hourly candles from Coinbase (Kraken if a coin isn't
+listed) for 20 coins, and breeds every strategy kind on 5-minute, 15-minute, hourly and 4-hour bars
+(`src/game/lab.ts`): random variants plus the guild book's current genomes, kept, mutated a little and crossed
+for up to 40 generations, within a 30-minute budget, on four cores. A genome is scored by the worse of the two
+halves of its training data, so it has to work in both.
+
+- **Selection is out of sample.** Breeding sees the first 60% of the data; the next 20% picks each niche's
+  champion; the last 20% is looked at once. *Proven* = money made on all three with enough trades, a profit
+  factor above 1, validation and test together clearly positive (t ≥ 1.5), and still with costs 50% higher. The job summary prints every niche's champion next to the
+  usual settings.
+- **The guild book** (`/lab`, `GET /api/lab`) keeps the best 40. New villagers (dawn and the King's summons) are
+  trained in a slightly adjusted copy of a book genome, better-ranked ones more often (`summonAs` lets a
+  petition ask for a kind or a genome). The councils see the book and may move a villager onto a genome by id;
+  a villager on a book genome keeps its genes and targets unless it changes kind or genome.
+- **Live results feed back.** Every close from a book strategy adds to that genome's live record; after 20
+  live trades a genome losing clearly is retired and never drawn again. The next lab run starts from the book.
+- **Longer bars live.** The ticks keep 10 days of hourly closes per coin (`ticks.h`); hourly and 4-hour
+  strategies trade on finished bars only. Missing history is filled from Kraken's hourly candles, three coins a
+  tick, while anything needs it.
+- **Running it by hand:** Actions → Strategy lab → Run workflow (minutes, post = 1). Pushes to the lab's files
+  on the working branch run it without posting, to try changes on real data.
+
+## Paper trading and the gates before real money
+
+Every order the villagers send — filled or rejected by the (simulated) exchange — is stored in
+`paper_orders` with the price expected, the price filled, costs, P&L and the price one tick later; every
+change of strategy is stored in `strategy_changes` with who made it (the dawn council, a review, a royal
+decree). Both are written in the same statement as the world.
+
+`/paper` (and `GET /api/paper`) shows paper results for the whole parish and per strategy (trades a day,
+win rate, P&L, cost per fill, fill against the expected price, rejections, follow-through), where they
+differ from the latest backtest (pace, cost per fill, win rate — once a strategy has 10 closed trades), the
+recent orders and the strategy change log.
+
+It also runs the gates before any real money. **All** must pass, and even then it is a person's decision —
+nothing switches automatically:
+
+1. The schedule runs reliably — 95% of expected trading ticks over 7 days.
+2. The books always reconcile — no ledger mismatch in 30 days.
+3. Risk controls enforced on the server.
+4. Realistic execution.
+5. A strategy survives unseen data — the latest backtest shows one making money on the hold-out and in
+   walk-forward, with 10+ trades.
+6. 30 days of profitable paper trading, with the worst drawdown under 20% of the parish.
+7. Paper trading matches the backtest — enough trades, and no unexplained differences.
+8. Security review, 9. monitoring and alerts, 10. legal and regulatory assessment — signed off by the owner
+   setting `READINESS_SECURITY_REVIEW`, `READINESS_MONITORING` and `READINESS_LEGAL` (e.g. a date and a name)
+   in Vercel. Set them only once the work is actually done.

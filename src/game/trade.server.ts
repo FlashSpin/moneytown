@@ -11,16 +11,18 @@
 import { loadTape } from "@/lib/tape.server";
 import { SHOUT_LIFE } from "./constants";
 import { marketCoins, priceOf, scanCoins } from "./dawn";
-import { appendTick, priceFresh, tradingSeries, validatePrices, type Ticks } from "./indicators";
+import { appendHourly, appendTick, hoursOf, priceFresh, seedHourly, seriesForBar, tradingSeries, validatePrices, type Ticks } from "./indicators";
+import { recordLive } from "./lab";
 import { haltReason, riskBook, type Gate } from "./limits";
 import { standAt } from "./shops";
 import { marketExecutor } from "./execution";
 import { addLesson } from "./knowledge";
+import { ordersFrom, type PaperOrder } from "./paper";
 import { checkMilestones } from "./progress";
 import { RANK_INFO, rankChange, rankOf } from "./ranks";
 import { Journal, withPostings } from "./ledger";
 import { DESK_DEFAULT_GAP, tradingDesk, type CouncilSoul, type Desk } from "./llm.server";
-import { defaultStrategy, deskStep, tradeStep, type Strategy, type TradeEvent, type Trader } from "./strategies";
+import { defaultStrategy, deskStep, genesOf, tradeStep, type Strategy, type TradeEvent, type Trader } from "./strategies";
 import { wanderPoint } from "./town";
 import { temperOf } from "./trading";
 import type { GameState, SpeechLine, Subject, Tape } from "./types";
@@ -95,6 +97,7 @@ export function tradeParish(
   speech: SpeechLine[];
   skipped: number;
   notes: { kind: "subject" | "tape"; text: string }[];
+  rejects: Parameters<typeof ordersFrom>[1];
   risk: NonNullable<GameState["risk"]>;
 } {
   const market = marketCoins(tape);
@@ -104,6 +107,7 @@ export function tradeParish(
   const universe = tradableCoins(tape);
   const hot = new Set(tape.trending ?? []);
   let skipped = 0;
+  const rejects: Parameters<typeof ordersFrom>[1] = [];
   const paused = new Set(state.decree?.paused ?? []);
   const notes: { kind: "subject" | "tape"; text: string }[] = [];
   const stake = stakeSats(tape);
@@ -143,6 +147,7 @@ export function tradeParish(
     const own = order ? deskStep(me, order, px, now, stake, counted, exec) : null;
     if (own?.skipped) skipped++;
     if (own?.skipped?.startsWith("rejected")) book.block(own.skipped);
+    if (own?.rejectedOrder) rejects.push({ villagerId: s.id, name: s.firstName, order: own.rejectedOrder, expected: priceOf(tape, own.rejectedOrder.coin) });
     const step = own?.events.length
       ? { trader: own.trader, fills: own.events }
       : (() => {
@@ -155,8 +160,9 @@ export function tradeParish(
                 return "strategy paused";
               }
             : counted;
-          const r = tradeStep(me, px, (coin) => tradingSeries(ticks, coin, now), now, stake, universe, hot, kindGate, exec);
+          const r = tradeStep(me, px, (coin, bar) => seriesForBar(ticks, coin, bar, now), now, stake, universe, hot, kindGate, exec);
           if (r.rejected) book.block(r.rejected);
+          if (r.rejectedOrder) rejects.push({ villagerId: s.id, name: s.firstName, order: r.rejectedOrder, expected: priceOf(tape, r.rejectedOrder.coin) });
           return { trader: r.trader, fills: r.event ? [r.event] : [] };
         })();
     const trader = step.trader;
@@ -226,6 +232,7 @@ export function tradeParish(
     speech: speech.slice(0, 8),
     skipped,
     notes,
+    rejects,
     risk: { at: now, blocked: book.blocked, ...(book.pausedToday ? { pausedToday: book.pausedToday } : {}) },
   };
 }
@@ -254,7 +261,10 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
 
   // Prices are checked before they are recorded: an implausible jump waits for the next tick to confirm it.
   const checked = validatePrices(prev.ticks, pricesOf(tape));
-  const ticks = { ...appendTick(prev.ticks, now, checked.accepted), suspect: checked.suspect };
+  const scan = new Set(scanCoins(tape));
+  const hourly = Object.fromEntries(Object.entries(checked.accepted).filter(([c]) => scan.has(c)));
+  const ticks: Ticks = { ...appendTick(prev.ticks, now, checked.accepted), suspect: checked.suspect, h: appendHourly(prev.ticks?.h, now, hourly), hSeeded: prev.ticks?.hSeeded };
+  await seedHourlyBars(prev, ticks, [...scan], now);
   // A held-back coin trades (and marks) at its last good price this tick, with no book to fill against.
   for (const coin of checked.held) {
     const good = ticks.px[coin]?.[ticks.px[coin]!.length - 1];
@@ -275,7 +285,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
   }
   const answer = due ? memo.desk : undefined;
   const desk = answer && !("error" in answer) ? answer : null;
-  const { subjects, events, speech, skipped, risk, notes } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
+  const { subjects, events, speech, skipped, risk, notes, rejects } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
   const journal = new Journal({ at: now, day: prev.day }, "trade");
   for (const e of events) journal.fill(e);
 
@@ -296,6 +306,8 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
   if (prev.halt && prev.halt.at > (prev.lastTickAt ?? 0) && prev.halt.by === "ledger") {
     log = pushLog({ day: prev.day, log }, "system", `Trading halted: ${prev.halt.reason}.`);
   }
+  // Live results for the lab's genomes: the guild book learns which hold up.
+  const lab = prev.lab ? { ...prev.lab, pool: recordLive(prev.lab.pool, events) } : prev.lab;
   const traded: GameState = { ...prev, subjects, trades: [...events.slice().reverse(), ...(prev.trades ?? [])].slice(0, TRADES_KEPT) };
   const reached = checkMilestones(traded, now);
   for (const line of reached.notes) log = pushLog({ day: prev.day, log }, "crown", line);
@@ -324,8 +336,37 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     feed,
     log,
     marketNotes: { day: prev.day, coins: [...noted] },
+    paperOrders: [...(prev.paperOrders ?? []), ...ordersFrom(events, rejects, prev.day, now)] as PaperOrder[],
     milestones: reached.milestones,
+    ...(lab ? { lab } : {}),
   });
+}
+
+/** Hours of history a strategy on 4-hour bars may need (see MAX_WARMUP in ./lab.ts). */
+const HOURS_WANTED = 230;
+
+/**
+ * Strategies on hourly and 4-hour bars need days of history the ticks
+ * haven't seen yet: fill it from Kraken's hourly candles, a few coins a
+ * tick (each tried at most once an hour), only while something trades on
+ * longer bars or the guild book holds such a strategy.
+ */
+async function seedHourlyBars(prev: GameState, ticks: Ticks, coins: string[], now: number): Promise<void> {
+  const wanted =
+    prev.subjects.some((s) => isLiving(s) && s.strategy && genesOf(s.strategy).bar >= 12) ||
+    (prev.lab?.pool ?? []).some((e) => !e.retired && e.genes.bar >= 12);
+  if (!wanted || !ticks.h) return;
+  const tried = { ...(ticks.hSeeded ?? {}) };
+  const short = coins.filter((c) => hoursOf(ticks, c) < HOURS_WANTED && now - (tried[c] ?? 0) > 3_600_000).slice(0, 3);
+  if (!short.length) return;
+  for (const c of short) tried[c] = now;
+  ticks.hSeeded = Object.fromEntries(Object.entries(tried).filter(([c]) => coins.includes(c)));
+  const { krakenHourly } = await import("@/lib/history.server");
+  const got = await krakenHourly(short).catch(() => ({}) as Record<string, { t: number; close: number }[]>);
+  for (const [coin, candles] of Object.entries(got)) {
+    const seeded = seedHourly(ticks.h[coin], candles);
+    if (seeded) ticks.h[coin] = seeded;
+  }
 }
 
 /** How healthy the market data is this tick: where prices came from, which have a book, and which are stale or held back. */

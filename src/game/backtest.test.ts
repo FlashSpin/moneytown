@@ -26,9 +26,9 @@ describe("the price grid", () => {
   it("buckets prices into 5-minute bars and leaves gaps empty", () => {
     const g = toGrid({ SOL: [{ t: 0, price: 1 }, { t: 60_000, price: 2 }, { t: 3 * BAR_MS + 5, price: 3 }] });
     assert.deepEqual(g.t, [0, BAR_MS, 2 * BAR_MS, 3 * BAR_MS]);
-    assert.deepEqual(g.px.SOL, [2, null, null, 3], "the last price in a bar counts");
-    assert.deepEqual(seriesAt(g, "SOL", 3), [3], "a gap breaks the series");
-    assert.deepEqual(seriesAt(g, "SOL", 1), []);
+    assert.deepEqual(Array.from(g.px.SOL!), [2, NaN, NaN, 3], "the last price in a bar counts");
+    assert.deepEqual(Array.from(seriesAt(g, "SOL", 3)), [3], "a gap breaks the series");
+    assert.deepEqual(Array.from(seriesAt(g, "SOL", 1)), []);
   });
 });
 

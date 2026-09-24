@@ -197,7 +197,7 @@ export function dataSnapshot(g: Grid): { from: number | null; to: number | null;
   for (const coin of Object.keys(g.px).sort()) {
     h = hash(coin, h);
     for (const v of g.px[coin]!) {
-      if (v == null) continue;
+      if (!(v > 0)) continue;
       prices++;
       h = hash(v.toPrecision(10), h);
     }

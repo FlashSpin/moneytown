@@ -6,12 +6,10 @@ const NOW = 10_000_000_000;
 const fine = {
   now: NOW,
   dbOk: true,
-  lastTickAt: NOW - 60_000,
-  lastReviewAt: NOW - 3_600_000,
+  lastMarketAt: NOW - 20 * 3_600_000,
   lastDawnAt: NOW - 3_600_000,
   halted: null,
   booksOk: true,
-  pricesDark: false,
   recentFailures: 0,
 };
 
@@ -25,20 +23,18 @@ describe("the health verdict", () => {
   it("names every problem", () => {
     const v = healthVerdict({
       ...fine,
-      lastTickAt: NOW - LIMITS.tickMs - 60_000,
-      lastReviewAt: null,
+      lastMarketAt: NOW - LIMITS.marketMs - 3_600_000,
+      lastDawnAt: null,
       halted: "by royal command",
       booksOk: false,
-      pricesDark: true,
       recentFailures: 2,
     });
     assert.equal(v.status, "degraded");
     assert.deepEqual(v.problems, [
-      "no trading tick for 16 min",
-      "no strategy review yet",
-      "trading halted: by royal command",
+      "no market day for 97 hours",
+      "no dawn yet",
+      "orders halted: by royal command",
       "the books don't reconcile",
-      "no market prices",
       "2 failed job runs in the last hour",
     ]);
   });

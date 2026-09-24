@@ -27,34 +27,31 @@ async function health(request: Request): Promise<Response> {
   let world: Record<string, unknown> = {};
   let jobs: unknown = null;
   let recentFailures = 0;
-  let input = { lastTickAt: null as number | null, lastReviewAt: null as number | null, lastDawnAt: null as number | null, halted: null as string | null, booksOk: null as boolean | null, pricesDark: false };
+  let input = { lastMarketAt: null as number | null, lastDawnAt: null as number | null, halted: null as string | null, booksOk: null as boolean | null };
   if (dbOk) {
     const { loadWorldRow } = await import("@/lib/world.server");
     const { jobStats } = await import("@/lib/jobs.server");
     const row = await loadWorldRow();
     const s = row.state;
     input = {
-      lastTickAt: s.lastTickAt ?? null,
-      lastReviewAt: s.lastReviewAt ?? null,
+      lastMarketAt: s.lastMarketAt ?? null,
       lastDawnAt: new Date(row.updated_at).getTime(),
       halted: s.halt?.reason ?? null,
       booksOk: s.ledger?.check ? s.ledger.check.ok : null,
-      pricesDark: Boolean(s.tape.dark),
     };
     world = {
       day: s.day,
       living: s.subjects.filter((x) => x.state !== "condemned" && x.state !== "hanging").length,
-      lastTickAt: input.lastTickAt,
-      lastReviewAt: input.lastReviewAt,
+      era: s.era ?? "crypto (re-founded as the guild at the next dawn or market day)",
+      lastMarketAt: input.lastMarketAt,
+      lastMarketDay: s.lastMarketDay ?? null,
       lastDawnAt: input.lastDawnAt,
       books: input.booksOk === null ? "not checked yet" : input.booksOk ? "balanced" : "out of balance",
       halted: input.halted,
-      feed: s.feed ? { priced: s.feed.priced, listed: s.feed.listed, withBook: s.feed.withBook, stale: s.feed.stale.length } : null,
-      desk: s.desk ? { mind: s.desk.brain?.label ?? null, error: s.desk.error ?? null } : null,
     };
     const stats = await jobStats(24).catch(() => null);
     const lastHour = await jobStats(1).catch(() => null);
-    jobs = stats ? { ...stats, tradeTicksExpectedPerDay: 288 } : null;
+    jobs = stats;
     recentFailures = lastHour ? Object.values(lastHour).reduce((n, k) => n + k.failed, 0) : 0;
   }
   const verdict = healthVerdict({ now, dbOk, recentFailures, ...input });

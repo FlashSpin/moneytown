@@ -1,12 +1,11 @@
 import { create } from "zustand";
 import { getWorldState } from "@/lib/world";
 import { petitionTheKing, presentSeal } from "@/lib/petition";
-import { fetchTape } from "@/lib/tape";
 import { playDawn, playHang, playShout, playSpawn, playTalk } from "./audio";
 import { ambientTalk, trimSpeech } from "./brains";
 import { HANG_SECS, POI, SHOUT_LIFE, WALK_SPEED } from "./constants";
 import { facing, GALLOWS_DROP, GALLOWS_WATCH, moveToward, wanderPoint } from "./town";
-import type { GameState, King, Subject, Tape } from "./types";
+import type { GameState, King, Subject } from "./types";
 import { freshWorld } from "./world";
 import { uid } from "./wallets";
 
@@ -26,8 +25,6 @@ type ViewState = {
   seal: string | null;
   /** True once the server has accepted `seal`. */
   sovereign: boolean;
-  /** Live prices for the shop signs, refreshed every minute (display only — trades use the world's tape). */
-  liveTape: Tape | null;
   /** Seal-bearer only: how each AI provider fared on the last petition. */
   diagnostics: { provider: string; configured: boolean; last: string | null }[] | null;
   selectedId: string | null;
@@ -45,7 +42,6 @@ type ViewState = {
 
 type Actions = {
   loadWorld: () => Promise<void>;
-  loadLiveTape: () => Promise<void>;
   petition: (message: string) => Promise<void>;
   /** Try a seal passphrase; resolves to whether the server accepted it. */
   offerSeal: (passphrase: string) => Promise<boolean>;
@@ -98,8 +94,8 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
   const known = new Set(prev.subjects.map((x) => x.id));
   const serverById = new Map(world.subjects.map((x) => [x.id, x]));
   const onServer = new Set(serverById.keys());
-  const reviewed = world.lastReviewAt !== prev.lastReviewAt;
-  const traded = world.lastTickAt !== prev.lastTickAt;
+  const reviewed = world.council?.at !== prev.council?.at;
+  const traded = world.lastMarketAt !== prev.lastMarketAt;
   // Condemned souls already hanged (and removed) here must not walk back in.
   const arrivals = world.subjects.filter(
     (x) => !known.has(x.id) && x.state !== "condemned" && x.state !== "hanging",
@@ -112,28 +108,24 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     .map((x) => {
       const srv = serverById.get(x.id)!;
       if (x.state === "condemned" || x.state === "hanging") return x;
-      if (srv.balance !== x.balance) purseChanged = true;
-      // A trade opened or closed since the last poll: walk to (or away from) the stall.
-      const moved = srv.position?.openedAt !== x.position?.openedAt || (reviewed && srv.asset !== x.asset);
+      if (srv.balance !== x.balance || srv.worth !== x.worth) purseChanged = true;
       return {
         ...x,
         balance: srv.balance,
+        holdings: srv.holdings,
+        pending: srv.pending,
+        lastDecision: srv.lastDecision,
+        worth: srv.worth,
+        worthDay: srv.worthDay,
+        track: srv.track,
+        seasonStart: srv.seasonStart,
         lastPnl: srv.lastPnl,
-        side: srv.side,
-        asset: srv.asset,
-        size: srv.size,
-        entryUsd: srv.entryUsd,
-        dayStart: srv.dayStart,
         advice: srv.advice,
         temper: srv.temper,
         plan: srv.plan,
         followsKing: srv.followsKing,
-        record: srv.record,
         strategy: srv.strategy,
-        position: srv.position,
-        trades: srv.trades,
-        knowledge: srv.knowledge,
-        ...(moved ? { destX: srv.destX, destY: srv.destY, state: srv.state } : {}),
+        lessons: srv.lessons,
       };
     });
   const logIds = new Set(prev.log.map((e) => e.id));
@@ -166,20 +158,20 @@ function mergeWorld(prev: Store, world: GameState): Partial<Store> | null {
     decree: world.decree,
     log: [...fresh, ...prev.log].slice(0, 80),
     petitions: world.petitions,
-    lastReviewAt: world.lastReviewAt,
-    lastTickAt: world.lastTickAt,
+    lastMarketAt: world.lastMarketAt,
+    lastMarketDay: world.lastMarketDay,
     trades: world.trades,
-    desk: world.desk,
     halt: world.halt,
     season: world.season,
     seasons: world.seasons,
     milestones: world.milestones,
     lastDawn: world.lastDawn,
-    feed: world.feed,
-    risk: world.risk,
     ledger: world.ledger,
     council: world.council,
-    tape: world.tape,
+    board: world.board,
+    bench: world.bench,
+    book: world.book,
+    era: world.era,
     brain: world.brain,
     // New talk from the server (a review, or trades called out); otherwise keep what's playing.
     speechAt: world.speechAt,
@@ -206,7 +198,6 @@ export const useGame = create<Store>((set, get) => ({
   seal: null,
   sovereign: false,
   diagnostics: null,
-  liveTape: null,
   selectedId: null,
   tab: "overview",
   guideOpen: false,
@@ -222,15 +213,6 @@ export const useGame = create<Store>((set, get) => ({
       if (patch) set(patch);
     } catch {
       set({ loading: false, error: "Could not reach the parish. Retrying shortly." });
-    }
-  },
-
-  loadLiveTape: async () => {
-    try {
-      const tape = await fetchTape();
-      if (!tape.dark) set({ liveTape: tape });
-    } catch {
-      // Keep the last prices; the world's own tape still stands behind them.
     }
   },
 

@@ -1,22 +1,16 @@
 
-/**
- * Sats — there's no more player "Give" button to fund the treasury by hand,
- * so the King needs a real bootstrap balance or the parish would never open
- * its first soul. ~£222 at a ~74k £/BTC rate: enough to clear the reserve
- * (2x stake) plus several stakes; `maxSpawnsPerDawn` still gates growth to
- * one soul a day regardless.
- */
-export const KING_START = 300_000;
-/** Daily upkeep per villager, paid into the King's treasury. */
-export const RENT_GBP = 0.25;
-/** A villager whose purse falls below this cannot pay the King's dues, and hangs. */
-export const HANG_BELOW_GBP = 2;
-export const STAKE_GBP = 20;
+/** Money is in pence. The King's treasury at the founding of the guild: £50,000. */
+export const KING_START = 5_000_000;
+/** What the treasury stakes each new merchant: £1,000 for its ISA. */
+export const STAKE_GBP = 1000;
+export const STAKE_PENCE = STAKE_GBP * 100;
+/** The guild's dues on a merchant's season gain (the King may set them within these bounds). */
 export const TAX_MIN = 0;
-export const TAX_MAX = 0.6;
-export const TAX_DEFAULT = 0.2;
-export const SATS_PER_BTC = 100_000_000;
-export const LIVING_CAP = 24;
+export const TAX_MAX = 0.3;
+export const TAX_DEFAULT = 0.1;
+export const LIVING_CAP = 16;
+/** Days between the guild's strategy councils: an ISA's strategy shouldn't change often. */
+export const COUNCIL_EVERY = 7;
 
 /** Petitions to the King — every limit is enforced in code, whatever the King's AI says. */
 export const SUMMONS_PER_PETITION = 3;
@@ -25,15 +19,6 @@ export const SUMMONS_PER_DAY = 6;
 /** Hard ceiling on petitions (AI calls) per day, across every visitor. */
 export const PETITIONS_PER_DAY = 300;
 export const PETITION_MAX_CHARS = 280;
-
-/** The King's trading reviews: never more often than this (a scheduler calls every 4h). */
-export const REVIEW_MIN_HOURS = 3;
-/** Share of the purse at risk when the King gives no size: 10%..100%, default 40%. */
-export const SIZE_MIN = 0.1;
-export const SIZE_DEFAULT = 0.4;
-/** A villager whose purse is below this share of the stake may risk no more than SIZE_WEAK_MAX. */
-export const WEAK_PURSE_SHARE = 0.5;
-export const SIZE_WEAK_MAX = 0.25;
 
 /** How often the client re-fetches the shared world. The world itself only changes once a day. */
 export const WORLD_POLL_MS = 60_000;
@@ -82,22 +67,6 @@ export const WOMEN_NAMES = [
   "Rose",
   "Ellen",
 ];
-
-export const FALLBACK_TAPE = {
-  btcUsd: 100_000,
-  btcGbp: 74_000,
-  change24h: 0,
-  fearGreed: 50,
-  fearGreedLabel: "Neutral",
-  dark: true,
-  source: "dark",
-  fetchedAt: 0,
-  assets: {
-    BTC: { usd: 100_000, change24h: 0 },
-    ETH: { usd: 0, change24h: 0 },
-    SOL: { usd: 0, change24h: 0 },
-  },
-};
 
 export const POI = {
   castle: { x: 900, y: 268 },

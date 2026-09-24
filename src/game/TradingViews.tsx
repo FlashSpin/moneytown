@@ -1,158 +1,135 @@
-import { formatCoinPrice } from "@/lib/market";
-import { priceOf } from "./dawn";
-import { ago, useBestTape } from "./view-helpers";
-import type { Knowledge, Tally } from "./knowledge";
-import { coinsLabel, STRATEGY_INFO, unrealized, type Position, type Strategy } from "./strategies";
-import type { Subject, Tape } from "./types";
-import { formatPurse } from "./wallets";
+import { formatFundPrice } from "@/lib/market";
+import { performance, PRESET_BY_ID, strategyLabel, type GuildStrategy } from "./guild";
+import { describeM, FUNDS, type FundId } from "./merchant";
+import { useGame } from "./store";
+import type { Subject } from "./types";
+import { money } from "./wallets";
 
-export function Money({ sats, tape, signed = true }: { sats: number; tape: Tape; signed?: boolean }) {
-  const cls = sats > 0 ? "tape-up" : sats < 0 ? "tape-down" : "";
+/** Pence, coloured by sign. */
+export function Money({ pence, signed = true }: { pence: number; signed?: boolean }) {
+  const cls = pence > 0 ? "tape-up" : pence < 0 ? "tape-down" : "";
   return (
     <span className={cls}>
-      {signed ? (sats >= 0 ? "+" : "-") : ""}
-      {formatPurse(Math.abs(sats), tape)}
+      {signed ? (pence >= 0 ? "+" : "-") : ""}
+      {money(Math.abs(pence))}
     </span>
   );
 }
 
-/** A villager's line in the parish roll: its open trade with live P&L, or what its strategy is watching. */
-export function RollPosition({ strategy, position }: { strategy?: Strategy; position?: Position }) {
-  const tape = useBestTape();
-  if (position) {
-    const pnl = unrealized(position, priceOf(tape, position.coin));
-    return (
-      <span className={pnl >= 0 ? "roll-position roll-up" : "roll-position roll-down"}>
-        {position.side.toUpperCase()} {position.coin} · {pnl >= 0 ? "+" : "-"}
-        {formatPurse(Math.abs(pnl), tape)}
-      </span>
-    );
-  }
-  if (!strategy) return <span className="roll-position">FLAT</span>;
+const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+
+/** A merchant's line in the guild roll: its strategy and how it stands against the 60/40. */
+export function RollPosition({ subject }: { subject: Subject }) {
+  const bench = useGame((s) => s.bench?.sf ?? 100);
+  const p = performance(subject, bench);
+  const label = strategyLabel(subject.strategy).toUpperCase();
+  if (!p || !(subject.track?.days ?? 0)) return <span className="roll-position">{label} · NOT YET INVESTED</span>;
   return (
-    <span className="roll-position">
-      {STRATEGY_INFO[strategy.kind].label.toUpperCase()} · {strategy.coins.length ? `watching ${strategy.coins.join("/")}` : "scanning all coins"}
+    <span className={p.ahead >= 0 ? "roll-position roll-up" : "roll-position roll-down"}>
+      {label} · {pct(p.ret)} (60/40 {pct(p.bench)})
     </span>
   );
 }
 
-/** A villager's strategy and its open trade, in the wallet view. */
-export function TradeCard({
-  name,
-  strategy,
-  position,
-  trades,
-  knowledge,
-}: {
-  name: string;
-  strategy?: Strategy;
-  position?: Position;
-  trades?: number;
-  knowledge?: Knowledge;
-}) {
-  const tape = useBestTape();
+function strategyAbout(s: GuildStrategy): string {
+  const preset = s.preset ? PRESET_BY_ID.get(s.preset) : undefined;
+  return preset ? preset.about : describeM(s.genome);
+}
+
+/** A merchant's strategy, holdings and results, in the wallet view. */
+export function TradeCard({ subject }: { subject: Subject }) {
+  const board = useGame((s) => s.board);
+  const bench = useGame((s) => s.bench?.sf ?? 100);
+  const name = subject.firstName;
+  const worth = subject.worth ?? subject.balance;
+  const p = performance(subject, bench);
+  const rows = (Object.entries(subject.holdings ?? {}) as [FundId, number][])
+    .map(([f, u]) => ({ f, value: Math.round(u * (board?.funds[f]?.close ?? 0)) }))
+    .sort((a, b) => b.value - a.value);
   return (
     <div className="trade-card">
-      {strategy ? (
+      {subject.strategy ? (
         <>
-          <p className="trade-card-title">
-            {STRATEGY_INFO[strategy.kind].label} strategy · {coinsLabel(strategy)}
-          </p>
+          <p className="trade-card-title">{strategyLabel(subject.strategy)}</p>
           <p className="hint">
-            {name} {STRATEGY_INFO[strategy.kind].about}. {Math.round(strategy.sizePct * 100)}% of the purse per trade, take-profit{" "}
-            {strategy.takeProfitPct}%, stop-loss {strategy.stopLossPct}%, {strategy.shorts ? "may short" : "long only"}.
+            {name}&apos;s ISA: {strategyAbout(subject.strategy)}.{subject.strategy.note ? ` “${subject.strategy.note}”` : ""}
           </p>
         </>
       ) : (
         <p className="hint">No strategy yet — the next council will choose one.</p>
       )}
-      {position ? (
-        <p className="trade-open">
-          Open{position.own ? " (its own call)" : ""}: <strong>{position.side.toUpperCase()} {position.qty ? `${position.qty} ` : ""}{position.coin}</strong> filled at{" "}
-          {formatCoinPrice(position.entryUsd)}, now{" "}
-          {formatCoinPrice(priceOf(tape, position.coin))} ·{" "}
-          <Money sats={unrealized(position, priceOf(tape, position.coin))} tape={tape} /> · opened {ago(position.openedAt)}
-        </p>
-      ) : (
-        <p className="hint">No open trade — waiting for its signal.</p>
-      )}
-      <p className="hint">
-        {trades ?? 0} {trades === 1 ? "fill" : "fills"} today.
+      <p className="trade-open">
+        Worth <strong>{money(worth)}</strong>
+        {subject.track ? (
+          <>
+            {" "}
+            (staked {money(subject.track.start)}
+            {p && subject.track.days ? (
+              <>
+                , {pct(p.ret)} over {subject.track.days} market days; a 60/40 made {pct(p.bench)})
+              </>
+            ) : (
+              ")"
+            )}
+          </>
+        ) : null}
       </p>
-      <Learned name={name} knowledge={knowledge} tape={tape} />
-    </div>
-  );
-}
-
-const tallyLine = (t: Tally) => `${t.w}W/${t.l}L`;
-
-/** What a villager has learned: its best and worst coins, how each approach has paid, and its lessons. */
-function Learned({ name, knowledge, tape }: { name: string; knowledge?: Knowledge; tape: Tape }) {
-  const coins = Object.entries(knowledge?.coins ?? {}).sort((a, b) => b[1].pnl - a[1].pnl);
-  const approaches = Object.entries(knowledge?.approaches ?? {}) as [string, Tally][];
-  if (!knowledge || (!coins.length && !knowledge.lessons.length)) {
-    return <p className="hint">{name} has no experience yet — it learns from every trade it closes.</p>;
-  }
-  const best = coins.slice(0, 3).filter(([, t]) => t.pnl > 0);
-  const worst = coins.slice(-3).reverse().filter(([, t]) => t.pnl < 0);
-  return (
-    <div className="learned">
-      <p className="trade-card-title">What {name} has learned</p>
-      {best.length ? (
-        <p className="hint">
-          Best:{" "}
-          {best.map(([c, t], i) => (
-            <span key={c}>
-              {i ? ", " : ""}
-              {c} {tallyLine(t)} <Money sats={t.pnl} tape={tape} />
-            </span>
+      {rows.length ? (
+        <ul className="isa-holdings">
+          {rows.map(({ f, value }) => (
+            <li key={f}>
+              <strong>{f}</strong> {FUNDS[f].name}: {money(value)} ({worth > 0 ? Math.round((value / worth) * 100) : 0}%)
+              {board?.funds[f] ? <span className="bt-muted bt-small"> · {formatFundPrice(board.funds[f]!.close)}</span> : null}
+            </li>
           ))}
-        </p>
-      ) : null}
-      {worst.length ? (
-        <p className="hint">
-          Worst:{" "}
-          {worst.map(([c, t], i) => (
-            <span key={c}>
-              {i ? ", " : ""}
-              {c} {tallyLine(t)} <Money sats={t.pnl} tape={tape} />
-            </span>
-          ))}
-        </p>
-      ) : null}
-      {approaches.length ? (
-        <p className="hint">
-          By approach:{" "}
-          {approaches
-            .map(([a, t]) => `${a === "own" ? "own calls" : (STRATEGY_INFO[a as Strategy["kind"]]?.label.toLowerCase() ?? a)} ${tallyLine(t)}`)
-            .join(", ")}
-        </p>
-      ) : null}
-      {knowledge.lessons.length ? (
-        <ul className="lessons">
-          {knowledge.lessons
-            .slice()
-            .reverse()
-            .map((l) => (
-              <li key={l}>“{l}”</li>
-            ))}
+          <li>Cash: {money(subject.balance)}</li>
         </ul>
+      ) : (
+        <p className="hint">All in cash ({money(subject.balance)}).</p>
+      )}
+      {subject.pending ? (
+        <p className="hint">
+          Orders decided at the close of {subject.pending.d}, filling at the next close:{" "}
+          {Object.entries(subject.pending.w)
+            .map(([f, w]) => `${f} ${Math.round((w ?? 0) * 100)}%`)
+            .join(", ")}
+          .
+        </p>
+      ) : null}
+      {subject.lessons?.length ? (
+        <div className="learned">
+          <p className="trade-card-title">What {name} has learned</p>
+          <ul className="lessons">
+            {subject.lessons
+              .slice()
+              .reverse()
+              .map((l) => (
+                <li key={l}>“{l}”</li>
+              ))}
+          </ul>
+        </div>
       ) : null}
     </div>
   );
 }
 
-/** How much of the parish's money is in each coin right now. */
-export function Exposure({ subjects, tape }: { subjects: Subject[]; tape: Tape }) {
+/** How the guild's money is spread across the funds at the latest close. */
+export function Exposure({ subjects }: { subjects: Subject[] }) {
+  const board = useGame((s) => s.board);
   const living = subjects.filter((s) => s.state !== "condemned" && s.state !== "hanging");
-  const equity = living.reduce((n, s) => n + s.balance + (s.position ? unrealized(s.position, priceOf(tape, s.position.coin)) : 0), 0);
-  const byCoin = new Map<string, number>();
-  for (const s of living) if (s.position) byCoin.set(s.position.coin, (byCoin.get(s.position.coin) ?? 0) + s.position.stake);
-  if (!byCoin.size || !(equity > 0)) return null;
-  const rows = [...byCoin.entries()].sort((a, b) => b[1] - a[1]);
+  const total = living.reduce((n, s) => n + (s.worth ?? s.balance), 0);
+  if (!(total > 0) || !board) return null;
+  const byFund = new Map<string, number>();
+  let cash = 0;
+  for (const s of living) {
+    cash += s.balance;
+    for (const [f, u] of Object.entries(s.holdings ?? {}) as [FundId, number][]) byFund.set(f, (byFund.get(f) ?? 0) + u * (board.funds[f]?.close ?? 0));
+  }
+  const rows = [...byFund.entries()].sort((a, b) => b[1] - a[1]);
   return (
     <p className="books-line">
-      In the market: {rows.map(([c, st]) => `${c} ${Math.round((st / equity) * 100)}%`).join(", ")} of the parish&apos;s money (cap 25% a coin).
+      The guild&apos;s money: {rows.map(([f, v]) => `${f} ${Math.round((v / total) * 100)}%`).join(", ")}
+      {rows.length ? ", " : ""}cash {Math.round((cash / total) * 100)}%.
     </p>
   );
 }

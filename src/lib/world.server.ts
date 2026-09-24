@@ -1,5 +1,7 @@
+import { STAKE_PENCE } from "@/game/constants";
 import { balancesOf, genesisPostings, type Posting } from "@/game/ledger";
 import type { GameState } from "@/game/types";
+import { refoundWorld } from "@/game/world";
 import { getSql } from "./db";
 
 type Row = { day: number; state: GameState | string; updated_at: string; rev: number; ledger?: Record<string, number> | string | null };
@@ -52,6 +54,18 @@ export async function loadWorldAndLedger(): Promise<WorldRow & { ledger: Map<str
   return { day: row.day, state: openBooks(state), updated_at: row.updated_at, rev: Number(row.rev), ledger };
 }
 
+/**
+ * The world as the guild keeps it: a parish still from the crypto era is
+ * re-founded as the Merchant guild (its old books closed back to genesis,
+ * every living villager staked afresh). The re-founding's postings ride with
+ * the caller's next save, so it happens exactly once — whichever save lands.
+ */
+export async function loadGuildWorld(): Promise<WorldRow & { ledger: Map<string, number> | null; refounded: boolean }> {
+  const row = await loadWorldAndLedger();
+  if (row.state.era === "guild") return { ...row, refounded: false };
+  return { ...row, state: refoundWorld(row.state, row.ledger, STAKE_PENCE, Date.now()), refounded: true };
+}
+
 /** Every posting, oldest first (for rebuilding purses and the audit trail). */
 export async function loadPostings(limit = 5000): Promise<Posting[]> {
   const sql = await getSql();
@@ -80,34 +94,11 @@ export async function ledgerSize(): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-/** The world to store, and what goes to its own tables instead of the world's JSON. */
-function split(state: GameState): { json: string; postings: string; orders: string; changes: string } {
-  const { postings, paperOrders, strategyChanges, ...world } = state;
-  return {
-    json: JSON.stringify(world),
-    postings: JSON.stringify(postings ?? []),
-    orders: JSON.stringify(paperOrders ?? []),
-    changes: JSON.stringify(strategyChanges ?? []),
-  };
+/** The world to store, and the postings that go to the ledger instead of the world's JSON. */
+function split(state: GameState): { json: string; postings: string } {
+  const { postings, ...world } = state;
+  return { json: JSON.stringify(world), postings: JSON.stringify(postings ?? []) };
 }
-
-// Paper orders and strategy changes ride along in the same statement.
-const INSERT_ORDERS = `
-  insert into paper_orders (at, day, villager_id, name, approach, coin, side, action, status, stake, expected_price, fill_price, cost_sats, fee_sats, pnl_sats, reason)
-  select to_timestamp(o."at" / 1000.0), o."day", o."villagerId", o."name", o."approach", o."coin", o."side", o."action", o."status", o."stake",
-         o."expectedPrice", o."fillPrice", o."costSats", o."feeSats", o."pnlSats", o."reason"
-  from jsonb_to_recordset($ORDERS::jsonb) as o("at" bigint, "day" int, "villagerId" text, "name" text, "approach" text, "coin" text, "side" text,
-       "action" text, "status" text, "stake" bigint, "expectedPrice" double precision, "fillPrice" double precision, "costSats" bigint,
-       "feeSats" bigint, "pnlSats" bigint, "reason" text)
-  where exists (select 1 from w)
-  returning 1`;
-
-const INSERT_CHANGES = `
-  insert into strategy_changes (at, day, villager_id, name, by, before, after)
-  select to_timestamp(c."at" / 1000.0), c."day", c."villagerId", c."name", c."by", c."before", c."after"
-  from jsonb_to_recordset($CHANGES::jsonb) as c("at" bigint, "day" int, "villagerId" text, "name" text, "by" text, "before" jsonb, "after" jsonb)
-  where exists (select 1 from w)
-  returning 1`;
 
 // The postings are inserted in the same statement as the world update, and
 // only if that update matched — so the world and the ledger change together
@@ -127,17 +118,15 @@ const INSERT_POSTINGS = `
  */
 export async function saveNewDay(state: GameState, rev: number): Promise<boolean> {
   const sql = await getSql();
-  const { json, postings, orders, changes } = split(state);
+  const { json, postings } = split(state);
   const rows = await sql.query<{ saved: number }>(
     `with w as (
        update world_state set state = $1::jsonb, day = $2, updated_at = now(), rev = rev + 1
        where id = 'default' and rev = $3 and day = $4
        returning rev
-     ), l as (${INSERT_POSTINGS.replace("$POSTINGS", "$5")}),
-     o as (${INSERT_ORDERS.replace("$ORDERS", "$6")}),
-     c as (${INSERT_CHANGES.replace("$CHANGES", "$7")})
+     ), l as (${INSERT_POSTINGS.replace("$POSTINGS", "$5")})
      select count(*)::int as saved from w`,
-    [json, state.day, rev, state.day - 1, postings, orders, changes],
+    [json, state.day, rev, state.day - 1, postings],
   );
   return Number(rows[0]?.saved ?? 0) > 0;
 }
@@ -150,17 +139,15 @@ export async function saveNewDay(state: GameState, rev: number): Promise<boolean
  */
 export async function saveWorldIfUnchanged(state: GameState, rev: number): Promise<boolean> {
   const sql = await getSql();
-  const { json, postings, orders, changes } = split(state);
+  const { json, postings } = split(state);
   const rows = await sql.query<{ saved: number }>(
     `with w as (
        update world_state set state = $1::jsonb, rev = rev + 1
        where id = 'default' and rev = $2 and day = $3
        returning rev
-     ), l as (${INSERT_POSTINGS.replace("$POSTINGS", "$4")}),
-     o as (${INSERT_ORDERS.replace("$ORDERS", "$5")}),
-     c as (${INSERT_CHANGES.replace("$CHANGES", "$6")})
+     ), l as (${INSERT_POSTINGS.replace("$POSTINGS", "$4")})
      select count(*)::int as saved from w`,
-    [json, rev, state.day, postings, orders, changes],
+    [json, rev, state.day, postings],
   );
   return Number(rows[0]?.saved ?? 0) > 0;
 }

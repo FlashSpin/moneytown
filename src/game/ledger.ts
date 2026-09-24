@@ -9,18 +9,22 @@
  * Accounts:
  *   king          the royal treasury
  *   v:<id>        a villager's purse
- *   market        the other side of every trade: realised profits come from it, losses go to it
- *   fees          the exchange's fees on every fill
+ *   market        the other side of every trade: purchases go to it, sales come from it
+ *   fees          the cost of every trade (spread and currency fee)
  *   genesis       where the money that existed before the ledger began came from
- * Amounts are integer sats.
+ * Amounts are integer pence (before the guild was founded, sats: the
+ * re-founding closed every sats balance back to genesis first).
  */
-import type { TradeEvent } from "./strategies.ts";
+import type { FundTrade } from "./guild.ts";
 import type { GameState, Subject } from "./types.ts";
 
 export type PostingKind =
   | "genesis"
+  | "refound"
   | "stake"
   | "fee"
+  | "buy"
+  | "sell"
   | "pnl"
   | "tax"
   | "upkeep"
@@ -35,7 +39,7 @@ export type Posting = {
   at: number;
   day: number;
   account: string;
-  /** Signed sats: + credits the account, - debits it. */
+  /** Signed pence (sats before the guild): + credits the account, - debits it. */
   amount: number;
   kind: PostingKind;
   coin?: string;
@@ -74,13 +78,13 @@ export class Journal {
     this.postings.push({ ...base, seq: 0, account: from, amount: -amt }, { ...base, seq: 1, account: to, amount: amt });
   }
 
-  /** The postings for one trade fill: the fee to the exchange, and on a close the profit or loss from the market. */
-  fill(e: TradeEvent): void {
+  /** The postings for one fill: the money to the market (or from it, on a sale), and its cost to the fees account. */
+  trade(e: FundTrade): void {
     const v = villagerAccount(e.id);
-    const memo = `${e.action} ${e.side} ${e.coin} @ ${e.price}`;
-    const fee = e.fee ?? 0;
-    if (e.action === "close") this.transfer(MARKET, v, (e.pnl ?? 0) + fee, "pnl", { coin: e.coin, memo });
-    this.transfer(v, FEES, fee, "fee", { coin: e.coin, memo });
+    const memo = `${e.value >= 0 ? "bought" : "sold"} ${e.fund}`;
+    if (e.value >= 0) this.transfer(v, MARKET, e.value, "buy", { coin: e.fund, memo });
+    else this.transfer(MARKET, v, -e.value, "sell", { coin: e.fund, memo });
+    this.transfer(v, FEES, e.cost, "fee", { coin: e.fund, memo });
   }
 }
 
@@ -89,6 +93,19 @@ export function genesisPostings(state: Pick<GameState, "king" | "subjects" | "da
   const j = new Journal({ at, day: state.day }, "genesis");
   j.transfer(GENESIS, KING, state.king.balance, "genesis", { memo: "treasury when the ledger opened" });
   for (const s of state.subjects) j.transfer(GENESIS, villagerAccount(s.id), s.balance, "genesis", { memo: `${s.firstName}'s purse when the ledger opened` });
+  return j.postings;
+}
+
+/**
+ * Close the old books: every account's balance goes back to genesis (the
+ * crypto era's sats), so the guild's books open from zero in pence.
+ */
+export function refoundPostings(ledger: Map<string, number>, at: number, day: number): Posting[] {
+  const j = new Journal({ at, day }, "refound");
+  for (const [account, balance] of [...ledger.entries()].sort()) {
+    if (account === GENESIS || !balance) continue;
+    j.transfer(account, GENESIS, balance, "refound", { memo: "the crypto era's books closed when the guild was founded" });
+  }
   return j.postings;
 }
 
@@ -151,7 +168,7 @@ export function withBookCheck<T extends Pick<GameState, "king" | "subjects" | "l
   const check = reconcile(ledger, state, now);
   const next: T = { ...state, ledger: { ...state.ledger, check: { ...check, diffs: check.diffs.slice(0, 10) } } };
   if (!check.ok && !state.halt) {
-    next.halt = { at: now, reason: "the ledger doesn't match the purses; nothing new opens until the books are checked", by: "ledger" };
+    next.halt = { at: now, reason: "the ledger doesn't match the purses; no new orders until the books are checked", by: "ledger" };
   }
   return next;
 }

@@ -896,7 +896,7 @@
   color: var(--color-ink-soft);
 }
 
-/* ── Strategy backtests (/backtest) ─────────────────────────────────────── */
+/* ── Report pages (/isa) ─────────────────────────────────────────────── */
 .bt-page {
   --bt-a: #2f5f9e;
   --bt-b: #b3702a;
@@ -1941,7 +1941,7 @@ summary.trade-row:hover {
   gap: var(--space-2);
 }
 
-/* ── Paper trading (/paper) ─────────────────────────────────────────────── */
+/* ── Report tables ─────────────────────────────────────────────────────── */
 .readiness-gates {
   display: flex;
   flex-direction: column;
@@ -2023,4 +2023,76 @@ summary.trade-row:hover {
 
 .lab-table {
   min-width: 760px;
+}
+
+/* ── The Merchant guild (/isa) ────────────────────────────────────────── */
+.isa-page {
+  --isa-a: #2f5f9e;
+  --isa-b: #c05a2a;
+  --isa-c: #15906a;
+}
+
+.isa-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.isa-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.isa-stat strong {
+  font-size: 1.35rem;
+}
+
+.isa-stat-label {
+  font-size: var(--text-sm);
+  color: var(--color-ink-soft);
+}
+
+.isa-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.isa-a {
+  stroke: var(--isa-a);
+}
+
+.isa-b {
+  stroke: var(--isa-b);
+}
+
+.isa-c {
+  stroke: var(--isa-c);
+}
+
+.isa-a-swatch {
+  border-top-color: var(--isa-a);
+}
+
+.isa-b-swatch {
+  border-top-color: var(--isa-b);
+}
+
+.isa-c-swatch {
+  border-top-color: var(--isa-c);
+}
+
+.isa-page .bt-chart {
+  max-width: 720px;
+}
+
+.isa-holdings {
+  margin: var(--space-2) 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-sm);
 }

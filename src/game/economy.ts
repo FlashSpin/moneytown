@@ -7,19 +7,19 @@
 
 export type KingPolicy = {
   /** The King never spends the treasury below this. */
-  reserveSats: number;
+  reservePence: number;
   /** Cost of opening one villager, paid from the treasury. */
-  stakeSats: number;
+  stakePence: number;
   maxLiving: number;
   maxSpawnsPerDawn: number;
   /** Do not open more villagers while this many are already in their first days. */
   maxUnproven: number;
 };
 
-export function defaultKingPolicy(stakeSats: number, maxLiving: number): KingPolicy {
+export function defaultKingPolicy(stakePence: number, maxLiving: number): KingPolicy {
   return {
-    reserveSats: stakeSats * 2,
-    stakeSats,
+    reservePence: stakePence * 2,
+    stakePence,
     maxLiving,
     maxSpawnsPerDawn: 1,
     maxUnproven: 2,
@@ -34,10 +34,10 @@ export function kingSpawnCount(input: {
   policy: KingPolicy;
 }): number {
   const { treasury, living, unproven, policy } = input;
-  if (policy.stakeSats <= 0) return 0;
-  const spendable = treasury - policy.reserveSats;
-  if (spendable < policy.stakeSats) return 0;
-  const byMoney = Math.floor(spendable / policy.stakeSats);
+  if (policy.stakePence <= 0) return 0;
+  const spendable = treasury - policy.reservePence;
+  if (spendable < policy.stakePence) return 0;
+  const byMoney = Math.floor(spendable / policy.stakePence);
   const bySlots = Math.max(0, policy.maxLiving - living);
   const byProof = Math.max(0, policy.maxUnproven - unproven);
   return Math.max(0, Math.min(byMoney, bySlots, byProof, policy.maxSpawnsPerDawn));
@@ -58,9 +58,9 @@ export function petitionSummonCount(input: {
   perDay: number;
 }): number {
   const { requested, treasury, living, summonedToday, policy, perPetition, perDay } = input;
-  if (!Number.isFinite(requested) || requested <= 0 || policy.stakeSats <= 0) return 0;
-  const spendable = treasury - policy.reserveSats;
-  const byMoney = spendable < policy.stakeSats ? 0 : Math.floor(spendable / policy.stakeSats);
+  if (!Number.isFinite(requested) || requested <= 0 || policy.stakePence <= 0) return 0;
+  const spendable = treasury - policy.reservePence;
+  const byMoney = spendable < policy.stakePence ? 0 : Math.floor(spendable / policy.stakePence);
   const bySlots = Math.max(0, policy.maxLiving - living);
   const byDay = Math.max(0, perDay - summonedToday);
   return Math.max(0, Math.min(Math.floor(requested), byMoney, bySlots, byDay, perPetition));

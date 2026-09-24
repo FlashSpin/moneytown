@@ -1,56 +1,63 @@
 import { Award, Scale, Target } from "lucide-react";
-import { HANG_BELOW_GBP, LIVING_CAP, RENT_GBP, STAKE_GBP, TAX_MAX } from "./constants";
-import { priceOf } from "./dawn";
+import { COUNCIL_EVERY, LIVING_CAP, STAKE_GBP, TAX_MAX } from "./constants";
+import { COST_PER_TRADE } from "./merchant";
+import { RUIN_SHARE } from "./guild";
 import { MILESTONES, parishWealth, SEASON_DAYS } from "./progress";
 import { RANK_INFO, RANKS, rankOf } from "./ranks";
 import { useGame } from "./store";
-import type { Tape } from "./types";
-import { formatPurse } from "./wallets";
+import type { Subject } from "./types";
+import { money } from "./wallets";
 
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 const date = (ms: number) => new Date(ms).toLocaleDateString([], { day: "numeric", month: "short" });
 
-/** The parish's objective: this season's growth goal, how far along it is, and the milestones. */
-export function ObjectivePanel({ tape }: { tape: Tape }) {
+/** The guild's objective: beat the 60/40 this season, how it stands, and the milestones. */
+export function ObjectivePanel() {
   const season = useGame((s) => s.season);
   const seasons = useGame((s) => s.seasons);
   const milestones = useGame((s) => s.milestones);
   const king = useGame((s) => s.king);
   const subjects = useGame((s) => s.subjects);
   const day = useGame((s) => s.day);
+  const bench = useGame((s) => s.bench?.sf ?? 100);
   const reached = MILESTONES.filter((m) => milestones?.[m.id]);
   const next = MILESTONES.filter((m) => !milestones?.[m.id]).slice(0, 3);
   const won = (seasons ?? []).filter((s) => s.won).length;
 
   return (
-    <section className="objective" aria-label="The parish's objective">
+    <section className="objective" aria-label="The guild's objective">
       <p className="section-label">
         <Target size={13} /> Objective
       </p>
       {season ? (
         (() => {
-          const wealth = parishWealth({ king, subjects }, (c) => priceOf(tape, c));
+          const wealth = parishWealth({ king, subjects });
           const change = season.startWealth > 0 ? wealth / season.startWealth - 1 : 0;
-          const progress = season.goal > 0 ? Math.max(0, Math.min(1, change / season.goal)) : 0;
+          const benchChange = season.startBench > 0 ? bench / season.startBench - 1 : 0;
+          const ahead = change - benchChange;
           const dayOf = Math.min(SEASON_DAYS, Math.max(1, day - season.startDay + 1));
           return (
             <>
               <p className="objective-goal">
-                Season {season.n}: grow the parish&apos;s wealth by <strong>{pct(season.goal)}</strong> in {SEASON_DAYS} days.
+                Season {season.n}: grow the guild&apos;s wealth <strong>more than a 60/40</strong> of shares and bonds over {SEASON_DAYS} days.
               </p>
               <div
                 className="objective-meter"
                 role="meter"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={Math.round(progress * 100)}
-                aria-label={`Progress to the season's goal: ${pct(change)} of ${pct(season.goal)}`}
+                aria-valuenow={Math.round((dayOf / SEASON_DAYS) * 100)}
+                aria-label={`Day ${dayOf} of ${SEASON_DAYS} of the season`}
               >
-                <span style={{ width: `${progress * 100}%` }} />
+                <span style={{ width: `${(dayOf / SEASON_DAYS) * 100}%` }} />
               </div>
               <p className="hint">
-                Day {dayOf} of {SEASON_DAYS} · now <span className={change >= 0 ? "tape-up" : "tape-down"}>{pct(change)}</span> from{" "}
-                {formatPurse(season.startWealth, tape)} to {formatPurse(wealth, tape)}
+                Day {dayOf} of {SEASON_DAYS} · the guild <span className={change >= 0 ? "tape-up" : "tape-down"}>{pct(change)}</span>, the 60/40{" "}
+                {pct(benchChange)} —{" "}
+                <strong className={ahead >= 0 ? "tape-up" : "tape-down"}>
+                  {ahead >= 0 ? "ahead" : "behind"} by {Math.abs(ahead * 100).toFixed(1)} points
+                </strong>{" "}
+                ({money(season.startWealth)} to {money(wealth)})
                 {season.hanged ? ` · ${season.hanged} hanged this season` : ""}
                 {seasons?.length ? ` · seasons won ${won} of ${seasons.length}` : ""}.
               </p>
@@ -58,7 +65,7 @@ export function ObjectivePanel({ tape }: { tape: Tape }) {
           );
         })()
       ) : (
-        <p className="hint">The first season begins at the next dawn: grow the parish&apos;s wealth within {SEASON_DAYS} days.</p>
+        <p className="hint">The first season begins at the next dawn: beat a 60/40 over {SEASON_DAYS} days.</p>
       )}
       <p className="section-label objective-sub">
         <Award size={13} /> Milestones · {reached.length}/{MILESTONES.length}
@@ -79,67 +86,65 @@ export function ObjectivePanel({ tape }: { tape: Tape }) {
   );
 }
 
-/** A villager's rank, from its record of closed trades. */
-export function RankBadge({ record }: { record?: { wins: number; losses: number; pnl: number } }) {
-  const rank = rankOf(record);
+/** A merchant's rank, from how long it has invested and how it stands against the 60/40. */
+export function RankBadge({ subject }: { subject: Subject }) {
+  const bench = useGame((s) => s.bench?.sf ?? 100);
+  const rank = rankOf(subject, bench);
   return (
-    <span className={`rank-badge rank-${rank}`} title={`${RANK_INFO[rank].label}: ${RANK_INFO[rank].rule}; risks up to ${Math.round(RANK_INFO[rank].riskCap * 100)}% a trade`}>
+    <span className={`rank-badge rank-${rank}`} title={`${RANK_INFO[rank].label}: ${RANK_INFO[rank].rule}`}>
       {RANK_INFO[rank].label}
     </span>
   );
 }
 
 /** What it takes to reach the next rank. */
-export function NextRank({ name, record }: { name: string; record?: { wins: number; losses: number; pnl: number } }) {
-  const rank = rankOf(record);
-  const i = RANKS.indexOf(rank);
-  const next = RANKS[i + 1];
-  const n = record ? record.wins + record.losses : 0;
+export function NextRank({ subject }: { subject: Subject }) {
+  const bench = useGame((s) => s.bench?.sf ?? 100);
+  const rank = rankOf(subject, bench);
+  const next = RANKS[RANKS.indexOf(rank) + 1];
+  const days = subject.track?.days ?? 0;
   return (
     <p className="hint">
-      {name} is {RANK_INFO[rank].label === "Apprentice" ? "an" : "a"} {RANK_INFO[rank].label} ({n} closed {n === 1 ? "trade" : "trades"}) and may risk up to{" "}
-      {Math.round(RANK_INFO[rank].riskCap * 100)}% of the purse on one trade.
+      {subject.firstName} is {RANK_INFO[rank].label === "Apprentice" ? "an" : "a"} {RANK_INFO[rank].label} ({days} market {days === 1 ? "day" : "days"} invested).
       {next ? ` Next: ${RANK_INFO[next].label} — ${RANK_INFO[next].rule}.` : " The highest rank."}
     </p>
   );
 }
 
-/** The parish's laws: tax, upkeep, the gallows, stakes, ranks and risk. */
+/** The guild's laws: dues, the gallows, stakes, ranks, costs and seasons. */
 export function LawsPanel({ taxRate }: { taxRate: number }) {
   return (
     <details className="laws">
       <summary>
-        <Scale size={13} /> The laws of the parish
+        <Scale size={13} /> The laws of the guild
       </summary>
       <ul>
         <li>
-          <strong>Tax</strong>, at dawn: {Math.round(taxRate * 100)}% (the crown may set 0–{Math.round(TAX_MAX * 100)}%) of each villager&apos;s
-          profit banked the day before. A losing day pays no tax, and its loss is carried forward: later profits are set against it before any
-          tax is due.
+          <strong>Investing</strong>: every merchant holds a stocks &amp; shares ISA — long only, in index funds, never borrowing. Orders are
+          decided after a market day&apos;s close and fill at the next; every trade costs {(COST_PER_TRADE * 100).toFixed(1)}%.
         </li>
         <li>
-          <strong>Upkeep</strong>, at dawn: £{RENT_GBP.toFixed(2)} a villager, into the treasury — or whatever is left if the purse can&apos;t
-          cover it.
+          <strong>Dues</strong>, at a season&apos;s end: {Math.round(taxRate * 100)}% (the crown may set 0–{Math.round(TAX_MAX * 100)}%) of each
+          merchant&apos;s gain over the season, to the treasury. No gain, no dues. Funds are sold to pay them if the purse lacks the cash.
         </li>
         <li>
-          <strong>The gallows</strong>: a villager worth under £{HANG_BELOW_GBP} at dawn (open trade included at that day&apos;s price) hangs;
-          what is left goes to the treasury.
+          <strong>The gallows</strong>: a merchant whose ISA falls below {Math.round(RUIN_SHARE * 100)}% of its stake is sold up at dawn and
+          hangs; the money goes to the treasury.
         </li>
         <li>
-          <strong>New souls</strong> cost the treasury a £{STAKE_GBP} stake each; it keeps two stakes in reserve, opens at most one a dawn and
-          no more than two unproven souls at once, up to {LIVING_CAP} living.
+          <strong>New merchants</strong> cost the treasury a £{STAKE_GBP.toLocaleString("en-GB")} stake each; it keeps two stakes in reserve,
+          stakes at most one a dawn and no more than two unproven merchants at once, up to {LIVING_CAP}.
         </li>
         <li>
-          <strong>Ranks</strong>:{" "}
-          {RANKS.map((r) => `${RANK_INFO[r].label} (${RANK_INFO[r].rule}; up to ${Math.round(RANK_INFO[r].riskCap * 100)}% a trade)`).join(" → ")}.
+          <strong>Ranks</strong>: {RANKS.map((r) => `${RANK_INFO[r].label} (${RANK_INFO[r].rule})`).join(" → ")}.
         </li>
         <li>
-          <strong>Risk</strong>: no villager may trade on after losing 10% in a day; the parish pauses until dawn after losing 8%; at most 25%
-          of the parish&apos;s money on one coin.
+          <strong>Councils</strong>: every {COUNCIL_EVERY} days the King advises and each merchant chooses its strategy. A merchant 5 points
+          behind the 60/40 after 60 market days is retrained.
         </li>
         <li>
-          <strong>Seasons</strong>: every {SEASON_DAYS} days the parish is judged on growing its whole wealth by the season&apos;s goal; a win
-          raises the next goal.
+          <strong>Seasons</strong>: every {SEASON_DAYS} days the guild is judged on growing its whole wealth more than a 60/40 did over the same
+          days.
         </li>
       </ul>
     </details>

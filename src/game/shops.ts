@@ -1,10 +1,8 @@
 /**
- * The market: one stall per coin, laid out in the part of the map every
+ * The market: one stall per fund, laid out in the part of the map every
  * screen shows (the town view crops the far left and right). Slot 0 is the
- * most prominent — beside the castle — and holds the coin ranked first.
+ * most prominent — beside the castle — and holds the first fund.
  */
-import { POI } from "./constants";
-import type { Asset } from "./dawn";
 
 export const SHOP_SLOTS: { x: number; y: number }[] = [
   // Upper plaza row, flanking the castle (ranks 1-6).
@@ -37,16 +35,3 @@ export const AWNINGS = [
   "#8b2c2c", "#3f5c3a", "#6b4226", "#2f4a6b", "#7a5a1e", "#5a3a6b", "#8b5a2c", "#2c6b63", "#6b2c4a", "#4a6b2c",
   "#8b2c2c", "#3f5c3a", "#6b4226", "#2f4a6b", "#7a5a1e", "#5a3a6b", "#8b5a2c", "#2c6b63", "#6b2c4a", "#4a6b2c",
 ];
-
-/** Where a coin's stall stands; a coin that has left the top 20 trades in the square. */
-export function shopFor(coin: Asset, coins: Asset[]): { x: number; y: number; slot: number } {
-  const i = coins.indexOf(coin);
-  if (i >= 0 && i < SHOP_SLOTS.length) return { ...SHOP_SLOTS[i]!, slot: i };
-  return { ...POI.square, slot: -1 };
-}
-
-/** The spot a trader stands at: just in front of (below) the stall's counter. */
-export function standAt(coin: Asset, coins: Asset[]): { x: number; y: number } {
-  const s = shopFor(coin, coins);
-  return { x: s.x, y: s.y + (s.slot >= 0 ? 34 : 0) };
-}

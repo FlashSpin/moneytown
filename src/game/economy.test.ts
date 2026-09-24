@@ -22,7 +22,7 @@ describe("king spawning is paid from the treasury only", () => {
         treasury: 9e9,
         living: 0,
         unproven: 0,
-        policy: { ...policy, stakeSats: 0 },
+        policy: { ...policy, stakePence: 0 },
       }),
       0,
     );

@@ -24,8 +24,8 @@ function IsaPage() {
         </Link>
         <h1>The Merchant guild</h1>
         <p className="bt-lede">
-          Where the crypto villagers day-trade, the merchants invest the way a stocks &amp; shares ISA can: long-only, in a handful of index funds,
-          checked once a week or month. They run a paper ISA of {gbp(ISA_START)} — {Math.round(CORE_SHARE * 100)}% on a well-tested trend rule,
+          Every merchant in Ledgerford invests the way a stocks &amp; shares ISA can: long-only, in a handful of index funds, checked once a
+          week or month. Here is the guild&apos;s lab, and its model ISA of {gbp(ISA_START)} — {Math.round(CORE_SHARE * 100)}% on a well-tested trend rule,
           the rest on the best strategy their lab has proven — and measure it against simply holding shares, and a 60/40 of shares and bonds.
           Pretend money only.
         </p>
@@ -292,7 +292,7 @@ function About() {
       <h2 id="about-title">How it works</h2>
       <ul className="lab-method">
         <li>
-          <strong>Funds, not coins.</strong> The lab tests on US-listed funds with long histories (back to 2004, dividends included). A real ISA
+          <strong>Real fund prices.</strong> The lab tests on US-listed funds with long histories (back to 2004, dividends included). A real ISA
           would hold the UK-listed (UCITS) version shown next to each; their returns would differ a little, and with the pound.
         </li>
         <li>
@@ -304,8 +304,12 @@ function About() {
           The trend rule aims for smaller falls, not a miracle.
         </li>
         <li>
-          <strong>Next, if it earns it:</strong> the same strategies placing orders on a Trading 212 practice account, then — only after the
-          readiness gates pass and you decide — a small real ISA with hard limits.
+          <strong>The town and the lab.</strong> The merchants in the town choose from the same strategies, and newcomers and retrained
+          merchants are given the lab&apos;s proven ones first.
+        </li>
+        <li>
+          <strong>Next, if it earns it:</strong> the same strategies placing orders on a Trading 212 practice account, then — only if you decide
+          — a small real ISA with hard limits.
         </li>
       </ul>
       <p className="bt-small bt-muted">Paper trading only. Not financial advice. Past results never guarantee future ones.</p>

@@ -4,18 +4,18 @@ import { PETITION_MAX_CHARS, SUMMONS_PER_DAY } from "./constants";
 import { useGame } from "./store";
 
 const COMMON_ASKS = [
-  "How fare the villagers?",
-  "What strategies are the villagers running?",
-  "Your Majesty, summon a new villager!",
+  "How fare the merchants?",
+  "Which strategies are the merchants following?",
+  "Your Majesty, summon a new merchant!",
 ];
 
 const SOVEREIGN_ASKS = [
   "Who is at risk of the gallows?",
   "Banish the poorest soul.",
-  "Set the tax to 10%.",
-  "Favour ETH in the markets.",
-  "Give the weakest trader a cautious scalping strategy on BTC.",
-  "Summon five more traders.",
+  "Set the dues to 10%.",
+  "Favour GLD in the markets.",
+  "Give the weakest merchant the sixty-forty strategy.",
+  "Summon two more merchants.",
 ];
 
 function SealControl() {

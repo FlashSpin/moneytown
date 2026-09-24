@@ -1,4 +1,3 @@
-import type { Asset, Side } from "./dawn.ts";
 
 export type SubjectAction = "earn" | "idle" | "walk";
 export type KingAction = "hold";
@@ -9,43 +8,25 @@ export type BrainKind = "gemini" | "groq" | "claude" | "grok" | "pollinations" |
 
 export type BrainInfo = { kind: BrainKind; label: string };
 
-/**
- * One coin on the tape: the last price and 24h change, and — from the
- * exchange, when it gave them — the best bid and ask, 24h volume, and the
- * pair's order rules (minimum size and cost, quantity precision).
- */
-export type AssetQuote = {
-  usd: number;
-  change24h: number;
-  name?: string;
-  bid?: number;
-  ask?: number;
-  vol24hUsd?: number;
-  ordermin?: number;
-  costmin?: number;
-  lotDecimals?: number;
-  /** Where the price came from. */
-  src?: "kraken" | "coingecko";
+/** One fund's latest close on the market board. */
+export type FundQuote = {
+  /** The close, in the fund's own currency (US dollars for the proxies), dividends included. */
+  close: number;
+  /** Change on the previous close. */
+  change1d: number;
+  /** Change over a year of trading days, when there is the history. */
+  change1y?: number;
+  /** Whether it closed above its 200-day average (the trend guard's test). */
+  above200?: boolean;
 };
 
-/** Silent FX for showing Bitcoin wallets in £ — never shown as a game tape. */
-export type Tape = {
-  btcUsd: number;
-  btcGbp: number;
-  change24h: number;
-  fearGreed: number;
-  fearGreedLabel: string;
-  dark: boolean;
-  source: string;
-  fetchedAt: number;
-  /** Live price + 24h change per coin (BTC mirrors the fields above); `name` is the coin's full name. */
-  assets: Record<Asset, AssetQuote>;
-  /** The market's tradable coins in market-cap rank order (the parish's 20 shops). */
-  coins?: Asset[];
-  /** The wider list the villagers scan for trades (the top 50 on the exchange), in rank order. */
-  scan?: Asset[];
-  /** Coins the crowd is searching for right now (CoinGecko trending), most searched first. */
-  trending?: Asset[];
+/** The market board: every fund at the latest close the guild has heard of. */
+export type Board = {
+  /** The market day of the close (YYYY-MM-DD). */
+  d: string;
+  /** When the guild heard of it (ms since epoch). */
+  at: number;
+  funds: Partial<Record<import("./merchant.ts").FundId, FundQuote>>;
 };
 
 export type SpeechLine = {
@@ -66,57 +47,42 @@ export type PurseFields = {
   balance: number;
 };
 
-export type Subject = PurseFields & {
-  id: string;
-  firstName: string;
-  lastPnl: number;
-  lastAction: SubjectAction;
-  lastFlavor: string;
-  body: BodySheet;
-  x: number;
-  y: number;
-  destX: number;
-  destY: number;
-  dir: WalkDir;
-  frame: number;
-  frameT: number;
-  state: AgentState;
-  hangT: number;
-  bornDay?: number;
-  /** This villager's current trading position, ordered by the King at each review. */
-  asset?: Asset;
-  side?: Side;
-  /** Share of the purse committed to the position (0.1..1). */
-  size?: number;
-  /** Asset price (USD) the position was last marked at; P&L runs from here. */
-  entryUsd?: number;
-  /** Purse at the start of the current day — the King's tax is on gains above it. */
-  dayStart?: number;
-  /** The King's latest advice to this villager. */
-  advice?: string;
-  /** How this villager trades — its own temperament, fixed at birth. */
-  temper?: import("./trading.ts").Temper;
-  /** This villager's own reasoning for its current trade, in its words. */
-  plan?: string;
-  /** Whether its current trade follows the King's advice. */
-  followsKing?: boolean;
-  /** Track record across every closed trade (net of fees). */
-  record?: { wins: number; losses: number; pnl: number };
-  /** The day-trading strategy it runs every tick (chosen at the council; see ./strategies.ts). */
-  strategy?: import("./strategies.ts").Strategy;
-  /** Its open trade, if any. */
-  position?: import("./strategies.ts").Position;
-  /** A resting limit order to open, waiting to fill (strategies that enter with limit orders). */
-  pending?: import("./strategies.ts").PendingOrder;
-  /** Fills today (opens and closes). */
-  trades?: number;
-  cooldownUntil?: number;
-  cooldownCoin?: Asset;
-  /** Losses from losing days not yet set against a profitable day's tax (sats). */
-  lossCarry?: number;
-  /** What it has learned from every trade it has closed, plus its written lessons (./knowledge.ts). */
-  knowledge?: import("./knowledge.ts").Knowledge;
-};
+/**
+ * A villager: a merchant of the guild. `balance` (from PurseFields) is the
+ * cash in its purse, in pence; the rest of its money is in funds
+ * (./guild.ts MerchantFields).
+ */
+export type Subject = PurseFields &
+  Omit<import("./guild.ts").MerchantFields, "id" | "firstName" | "balance"> & {
+    id: string;
+    firstName: string;
+    lastPnl: number;
+    lastAction: SubjectAction;
+    lastFlavor: string;
+    body: BodySheet;
+    x: number;
+    y: number;
+    destX: number;
+    destY: number;
+    dir: WalkDir;
+    frame: number;
+    frameT: number;
+    state: AgentState;
+    hangT: number;
+    bornDay?: number;
+    /** Worth at the start of the current season (its dues are a share of the gain from here). */
+    seasonStart?: number;
+    /** The King's latest advice to this villager. */
+    advice?: string;
+    /** How this villager invests — its own temperament, fixed at birth. */
+    temper?: import("./trading.ts").Temper;
+    /** This villager's own reasoning for its strategy, in its words. */
+    plan?: string;
+    /** Whether its strategy follows the King's advice. */
+    followsKing?: boolean;
+    /** Lessons it has written down at the councils, newest last. */
+    lessons?: string[];
+  };
 
 export type King = PurseFields & {
   name: string;
@@ -129,8 +95,8 @@ export type King = PurseFields & {
   frameT: number;
   lastAction: KingAction;
   lastFlavor: string;
-  /** The asset the King currently directs the parish to favor. */
-  favorAsset?: Asset;
+  /** The fund the King currently favours. */
+  favorAsset?: import("./merchant.ts").FundId;
 };
 
 export type LogEntry = {
@@ -144,60 +110,52 @@ export type LogEntry = {
 
 /** The whole shared, server-authoritative world — the JSON stored in world_state.state. */
 export type GameState = {
+  /** "guild" once the parish invests in funds (worlds before it traded crypto, and are re-founded). */
+  era?: "guild";
   day: number;
   exchequer: number;
   king: King;
   subjects: Subject[];
+  /** The guild's dues: the share of each merchant's season gain paid to the treasury. */
   taxRate: number;
-  tape: Tape;
+  /** The funds at the latest close. */
+  board?: Board;
+  /** The 60/40 and US-shares indexes (100 when the guild began), to judge everyone fairly. */
+  bench?: { sf: number; us: number };
   log: LogEntry[];
   seed: number;
   brain: BrainInfo;
   speech: SpeechLine[];
-  /** Today's petitions to the King — resets when the day changes. Absent on older saves. */
+  /** Today's petitions to the King — resets when the day changes. */
   petitions?: { day: number; count: number; summoned: number };
   /** The latest parish council: the King's plan and the villagers' strategy debate. */
   council?: { at: number; day: number; kingPlan: string; lines: { fromId: string; toId: string | null; text: string }[] };
-  /** Rolling prices for every coin, one sample per trading tick (server-side; stripped before reaching the browser). */
-  ticks?: import("./indicators.ts").Ticks;
-  /** The trading floor: recent fills, newest first. */
-  trades?: import("./strategies.ts").TradeEvent[];
+  /** The guild's recent fills, newest first. */
+  trades?: import("./guild.ts").FundTrade[];
   /** When `speech` was last written by the server — the browser replays it only when this changes. */
   speechAt?: number;
-  /** When the villagers last traded (the 5-minute tick). */
-  lastTickAt?: number;
-  /** The trading desk: when the villagers next look at the market with the AI to place their own trades, and what it said last. */
-  desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo; error?: string; probation?: string };
-  /** When the King last reviewed the parish's trades (ms since epoch). */
-  lastReviewAt?: number;
+  /** When the guild last stepped through a market day, and which day. */
+  lastMarketAt?: number;
+  lastMarketDay?: string;
+  /** The guild's book: the lab's best fund strategies (./merchant.ts), for councils and newcomers. */
+  book?: import("./merchant.ts").MEntry[];
   /**
    * Postings made by this change, not yet saved — written to the append-only
    * ledger in the same statement as the world, then dropped (src/lib/world.server.ts).
    */
   postings?: import("./ledger.ts").Posting[];
-  /** Paper orders and strategy changes made by this change, not yet saved (written with the world, then dropped). */
-  paperOrders?: import("./paper.ts").PaperOrder[];
-  strategyChanges?: import("./paper.ts").StrategyChange[];
   /** The ledger: when it opened, and the latest check of every purse against it. */
   ledger?: { since: number; check?: import("./ledger.ts").Reconciliation };
-  /** Trading halted: no new trades open (open ones are still managed). Set by the seal-bearer or a failed ledger check. */
+  /** New orders halted: nothing is bought or sold until resumed (by the seal-bearer, or after a failed ledger check). */
   halt?: { at: number; reason: string; by: "seal" | "ledger" };
-  /** Market data health at the latest trading tick. */
-  feed?: { at: number; source: string; listed: number; priced: number; kraken: number; withBook: number; stale: string[]; held: string[] };
-  /** The latest trading tick's risk checks: trades blocked, by reason. */
-  risk?: { at: number; blocked: Record<string, number>; pausedToday?: { day: number; reason: string } };
   /** The season now running: the parish's objective (./progress.ts). */
   season?: import("./progress.ts").Season;
   /** Seasons already judged, newest first. */
   seasons?: import("./progress.ts").SeasonResult[];
   /** Milestones reached, by id, with when. */
   milestones?: Record<string, { at: number; day: number }>;
-  /** What the last dawn moved: profit banked, tax, upkeep, stakes paid out, purses taken at the gallows. */
+  /** What the last dawn moved. */
   lastDawn?: import("./progress.ts").DawnBook;
-  /** Coins whose big move has been chronicled today. */
-  marketNotes?: { day: number; coins: string[] };
-  /** The guild book: strategies bred and judged by the strategy lab (./lab.ts), with their live results. */
-  lab?: { at: number; runs: number; pool: import("./lab.ts").PoolEntry[] };
   /** Standing royal orders from the seal-bearer; the daily tick honours them over the King's AI. */
-  decree?: { taxRate?: number; favorAsset?: Asset; paused?: import("./strategies.ts").StrategyKind[] };
+  decree?: { taxRate?: number; favorAsset?: import("./merchant.ts").FundId };
 };

@@ -1,6 +1,7 @@
 # The Merchant guild: after the US close on weekdays, fetch every fund's daily
 # prices, breed and judge fund strategies against 60/40, and post the prices
-# and verdict to the app, which steps the paper ISA (/isa). Pushes to the
+# and verdict to the app, which runs a market day for every merchant in the
+# town and steps the model ISA (/isa). Pushes to the
 # merchant's own files run it without posting, to try changes on real data.
 name: Merchant guild
 

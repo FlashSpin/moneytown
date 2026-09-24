@@ -7,7 +7,7 @@
 import { getSql } from "./db";
 import { log } from "./log.server";
 
-export type JobKind = "trade" | "dawn" | "review" | "backtest" | "lab" | "merchant";
+export type JobKind = "dawn" | "merchant" | "trade" | "review" | "backtest" | "lab";
 export type Outcome = "ok" | "skipped" | "failed";
 
 export async function recordRun<T>(
@@ -70,7 +70,7 @@ export async function jobStats(hours = 24): Promise<JobStats> {
      from job_runs where started_at > now() - ($1 || ' hours')::interval order by started_at`,
     [String(hours)],
   );
-  const kinds: JobKind[] = ["trade", "dawn", "review", "backtest", "lab", "merchant"];
+  const kinds: JobKind[] = ["dawn", "merchant"];
   const out = {} as JobStats;
   for (const k of kinds) {
     const mine = rows.filter((r) => r.kind === k);

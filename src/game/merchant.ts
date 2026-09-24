@@ -1,7 +1,6 @@
 /**
- * The Merchant guild — pure, so it is easy to test. Where the crypto
- * villagers day-trade, the merchants invest the way a stocks & shares ISA
- * can: long-only, in a handful of index funds, rebalanced every week or
+ * The Merchant guild — pure, so it is easy to test. The merchants invest
+ * the way a stocks & shares ISA can: long-only, in a handful of index funds, rebalanced every week or
  * month, never shorting and never borrowing.
  *
  * The lab tests on long histories of US-listed funds (the proxies, which go
@@ -10,7 +9,7 @@
  * dollars, dividends included): a sterling investor's would differ with the
  * exchange rate.
  *
- * Honest by construction, as in ./lab.ts:
+ * Honest by construction:
  *   - a decision at day i's close fills at day i+1's close (no look-ahead),
  *     paying COST_PER_TRADE on every pound traded;
  *   - the data is split in time: 60% to breed on, 20% to choose the champion,

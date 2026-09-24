@@ -1,28 +1,22 @@
 /**
- * The parish's strategy review — server-only. Shared by the dawn tick and the
- * reviews every few hours (/api/review):
- *   1. the King studies the markets and each villager's trading, and advises
- *      each one on its day-trading strategy,
- *   2. the villagers hold a council — debate with each other and the King —
- *      and each chooses and tunes its own strategy and writes down a lesson
- *      from its trades (src/game/knowledge.ts),
- *   3. the strategies are stored; the 5-minute trading tick
- *      (src/game/trade.server.ts) trades them.
- * With no AI, each villager keeps its current strategy (or its temperament's
- * default, src/game/strategies.ts).
+ * The guild's strategy council — server-only, held at dawn every
+ * COUNCIL_EVERY days (src/game/tick.server.ts):
+ *   1. the King studies the market board and each merchant's ISA, and
+ *      advises each one on its investing strategy,
+ *   2. the merchants hold a council — debate with each other and the King —
+ *      and each chooses its own strategy and writes down a lesson,
+ *   3. the new strategies take effect at the next market day's decision.
+ * With no AI, each merchant keeps its current strategy.
  */
-import { LIVING_CAP } from "./constants";
-import { priceOf } from "./dawn";
+import { COUNCIL_EVERY, LIVING_CAP } from "./constants";
 import { heuristicTalks } from "./brains";
-import { kingCouncil, parishCouncil, type Choice, type Council, type ParishCouncil } from "./llm.server";
-import { addLesson } from "./knowledge";
-import { STRATEGY_INFO, unrealized } from "./strategies";
-import { isLiving, soulFor, strategyOf } from "./trade.server";
+import { performance, presetStrategy, strategyLabel, TEMPER_PRESET, type GuildStrategy } from "./guild";
+import { kingCouncil, parishCouncil, type Choice, type Council, type CouncilSoul, type ParishCouncil } from "./llm.server";
 import { temperOf } from "./trading";
-import type { GameState, SpeechLine, Subject, Tape } from "./types";
-import { formatGbp, satsToGbp, tapeGbp } from "./wallets";
+import type { GameState, SpeechLine, Subject } from "./types";
+import { money } from "./wallets";
 
-export { isLiving };
+export { COUNCIL_EVERY };
 
 export type Review = {
   subjects: Subject[];
@@ -35,44 +29,80 @@ export type Review = {
   record: NonNullable<GameState["council"]>;
 };
 
-const currentStrategy = strategyOf;
+export const isLiving = (s: Subject) => s.state !== "condemned" && s.state !== "hanging";
+
+/** A merchant's strategy, or its temperament's for one that has none. */
+export function strategyOf(s: Subject): GuildStrategy {
+  return s.strategy ?? presetStrategy(TEMPER_PRESET[s.temper ?? temperOf(s.id)]);
+}
+
+/** "SPY 40%, IEF 30%, cash 30%", from the latest close. */
+export function holdingsLine(s: Subject, state: Pick<GameState, "board">): string {
+  const worth = s.worth ?? s.balance;
+  if (!(worth > 0)) return "";
+  const parts = Object.entries(s.holdings ?? {}).map(([f, u]) => {
+    const close = state.board?.funds[f as keyof NonNullable<GameState["board"]>["funds"]]?.close ?? 0;
+    return { f, v: (u ?? 0) * close };
+  });
+  parts.push({ f: "cash", v: s.balance });
+  return parts
+    .filter((p) => p.v / worth >= 0.01)
+    .sort((a, b) => b.v - a.v)
+    .map((p) => `${p.f} ${Math.round((p.v / worth) * 100)}%`)
+    .join(", ");
+}
+
+export function soulFor(s: Subject, state: Pick<GameState, "board" | "bench">): CouncilSoul {
+  const p = performance(s, state.bench?.sf ?? 100);
+  return {
+    id: s.id,
+    firstName: s.firstName,
+    temper: s.temper ?? temperOf(s.id),
+    worth: s.worth ?? s.balance,
+    start: s.track?.start ?? s.balance,
+    ret: p && (s.track?.days ?? 0) > 0 ? p.ret : null,
+    bench: p && (s.track?.days ?? 0) > 0 ? p.bench : null,
+    days: s.track?.days ?? 0,
+    strategy: strategyOf(s),
+    holdings: holdingsLine(s, state),
+    lessons: s.lessons,
+  };
+}
+
+const sameStrategy = (a: GuildStrategy, b: GuildStrategy) => JSON.stringify(a.genome) === JSON.stringify(b.genome);
 
 /**
- * The King advises, the villagers debate and choose, and each villager's new
- * strategy is stored. A villager the council doesn't decide for takes the
+ * The King advises, the merchants debate and choose, and each merchant's
+ * strategy is stored. A merchant the council doesn't decide for takes the
  * King's advice if there is some, else keeps what it has.
  */
-export async function councilStrategies(
-  state: GameState,
-  subjectsIn: Subject[],
-  tape: Tape,
-  opts: { dawn: boolean; rng: () => number; now: number },
-): Promise<Review> {
+export async function councilStrategies(state: GameState, subjectsIn: Subject[], opts: { dawn: boolean; rng: () => number; now: number }): Promise<Review> {
   const living = subjectsIn.filter(isLiving);
-  const souls = living.map((s) => soulFor(s, tape));
+  const souls = living.map((s) => soulFor(s, state));
   const council = living.length
     ? await kingCouncil({
         day: state.day,
         dawn: opts.dawn,
         kingBalance: state.king.balance,
         taxRate: state.taxRate,
-        favorAsset: state.king.favorAsset ?? "BTC",
+        favorAsset: state.king.favorAsset ?? "SPY",
         favorFixed: state.decree?.favorAsset !== undefined,
         taxFixed: state.decree?.taxRate !== undefined,
-        tape,
-        ticks: state.ticks,
+        board: state.board,
         souls,
-        book: state.lab?.pool,
+        book: state.book,
       })
     : null;
 
-  const kingPlan =
-    council?.say || "The King holds his counsel; let every soul trade by its own strategy and mind its stops.";
-  const advice = new Map<string, Choice>(souls.map((s) => [s.id, council?.advice.get(s.id) ?? s.strategy]));
+  const kingPlan = council?.say || "The King holds his counsel; let every merchant keep its course, spread its money and trade seldom.";
+  const advice = new Map<string, GuildStrategy & { note?: string }>(
+    souls.map((s) => {
+      const a = council?.advice.get(s.id);
+      return [s.id, a ? { ...a.strategy, ...(a.note ? { note: a.note } : {}) } : s.strategy];
+    }),
+  );
 
-  const parish = living.length
-    ? await parishCouncil({ day: state.day, tape, ticks: state.ticks, kingPlan, advice, souls, book: state.lab?.pool })
-    : null;
+  const parish = living.length ? await parishCouncil({ day: state.day, board: state.board, kingPlan, advice, souls, book: state.book }) : null;
 
   const counts = new Map<string, number>();
   let followers = 0;
@@ -80,61 +110,51 @@ export async function councilStrategies(
   let changed = 0;
   const subjects = subjectsIn.map((s) => {
     if (!isLiving(s)) return s;
-    const was = currentStrategy(s, tape);
+    const was = strategyOf(s);
     const told = advice.get(s.id)!;
-    const chosen = parish?.decisions.get(s.id) ?? { ...told, followsKing: Boolean(council) };
-    const { followsKing, lesson, ...strategy } = chosen;
-    // The villager's own lesson, else the one the King drew for it.
-    const learned = lesson || council?.advice.get(s.id)?.lesson;
+    const chosen: Choice = parish?.decisions.get(s.id) ?? { strategy: told, note: told.note, followsKing: Boolean(council) };
+    const learned = chosen.lesson || council?.advice.get(s.id)?.lesson;
     if (council) {
-      if (followsKing !== false) followers++;
+      if (chosen.followsKing !== false) followers++;
       else ownWay++;
     }
-    if (strategy.kind !== was.kind || strategy.coins.join() !== was.coins.join()) changed++;
-    counts.set(strategy.kind, (counts.get(strategy.kind) ?? 0) + 1);
+    const strategy: GuildStrategy = { ...chosen.strategy, ...(chosen.note ? { note: chosen.note } : {}) };
+    if (!sameStrategy(strategy, was)) changed++;
+    const label = strategyLabel(strategy);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
     return {
       ...s,
       temper: s.temper ?? temperOf(s.id),
       strategy,
       advice: told.note || s.advice,
-      plan: strategy.note || s.plan,
-      followsKing: council ? followsKing !== false : undefined,
-      knowledge: learned ? addLesson(s.knowledge, learned) : s.knowledge,
+      plan: chosen.note || s.plan,
+      followsKing: council ? chosen.followsKing !== false : undefined,
+      lessons: learned ? [...(s.lessons ?? []), learned].slice(-5) : s.lessons,
     };
   });
 
-  const mix = [...counts.entries()].map(([k, n]) => `${n} ${STRATEGY_INFO[k as keyof typeof STRATEGY_INFO].label.toLowerCase()}`).join(", ");
+  const mix = [...counts.entries()].map(([k, n]) => `${n} ${k.toLowerCase()}`).join(", ");
   const mind = parish?.brain.label ?? council?.brain.label;
   const who = council
-    ? `the King advises, the villagers debate and choose${mind ? ` (${mind})` : ""}: ${followers} follow him, ${ownWay} go their own way`
-    : "no agent answered; every soul keeps its strategy";
-  const summary = `Strategy council — ${who}. ${changed} change strategy. The parish now runs: ${mix || "nothing"}.`;
+    ? `the King advises, the merchants debate and choose${mind ? ` (${mind})` : ""}: ${followers} follow him, ${ownWay} go their own way`
+    : "no agent answered; every merchant keeps its strategy";
+  const summary = `Guild council — ${who}. ${changed} change strategy. The guild now runs: ${mix || "nothing"}.`;
 
   const speech = parish?.talks.length
     ? parish.talks
     : heuristicTalks(
         opts.rng,
         kingPlan,
-        subjects
-          .filter(isLiving)
-          .map((x) => ({ id: x.id, firstName: x.firstName, say: x.plan && x.plan !== kingPlan ? x.plan : "" })),
+        subjects.filter(isLiving).map((x) => ({ id: x.id, firstName: x.firstName, say: x.plan && x.plan !== kingPlan ? x.plan : "" })),
       );
-  const record = {
-    at: opts.now,
-    day: state.day,
-    kingPlan,
-    lines: speech.map((l) => ({ fromId: l.fromId, toId: l.toId, text: l.text })),
-  };
+  const record = { at: opts.now, day: state.day, kingPlan, lines: speech.map((l) => ({ fromId: l.fromId, toId: l.toId, text: l.text })) };
   return { subjects, council, parish, summary, speech, record };
 }
 
-/** Human summary of the parish's wealth for the chronicle: purses plus open trades at current prices. */
-export function wealthLine(subjects: Subject[], tape: Tape): string {
+/** The guild's wealth for the chronicle: every merchant's worth at the latest close. */
+export function wealthLine(subjects: Subject[]): string {
   const living = subjects.filter(isLiving);
-  const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(tape)));
-  const open = living.reduce((n, s) => n + (s.position ? unrealized(s.position, priceOf(tape, s.position.coin)) : 0), 0);
-  const total = living.reduce((n, s) => n + s.balance, 0) + open;
-  const today = living.reduce((n, s) => n + (s.balance - (s.dayStart ?? s.balance)), 0);
-  const trading = living.filter((s) => s.position).length;
-  return `${living.length}/${LIVING_CAP} souls hold ${gbp(total)} (${today >= 0 ? "+" : "-"}${gbp(Math.abs(today))} banked today; ${trading} in a trade).`;
+  const total = living.reduce((n, s) => n + (s.worth ?? s.balance), 0);
+  const staked = living.reduce((n, s) => n + (s.track?.start ?? s.balance), 0);
+  return `${living.length}/${LIVING_CAP} merchants hold ${money(total)} in their ISAs (staked ${money(staked)}).`;
 }

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { bearerOk, holdsSeal, holdsSealToken, isSovereign, looksLikeToken, sealToken } from "./seal.server.ts";
 import { redact } from "./log.server.ts";
-import { disabledSources } from "./tape-sources.ts";
 
 const env = { ...process.env };
 afterEach(() => {
@@ -42,7 +41,7 @@ describe("the royal seal", () => {
 });
 
 describe("the scheduler secret", () => {
-  const req = (auth?: string) => new Request("http://x/api/trade", { headers: auth ? { authorization: auth } : {} });
+  const req = (auth?: string) => new Request("http://x/api/tick", { headers: auth ? { authorization: auth } : {} });
   it("needs the exact bearer secret", () => {
     process.env.CRON_SECRET = "cron-secret-value";
     assert.equal(bearerOk(req("Bearer cron-secret-value")), true);
@@ -62,12 +61,5 @@ describe("logs", () => {
       CRON_SECRET: "abc",
     });
     assert.equal(line, '{"error":"bad key [redacted] for [redacted]"}');
-  });
-});
-
-describe("switching off a market source", () => {
-  it("reads the list", () => {
-    assert.deepEqual([...disabledSources(" Kraken, trending ,")], ["kraken", "trending"]);
-    assert.equal(disabledSources(undefined).size, 0);
   });
 });

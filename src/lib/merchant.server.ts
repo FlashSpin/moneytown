@@ -6,7 +6,10 @@
  * (src/game/merchant.ts `stepIsa`).
  */
 import { FUND_IDS, fixM, stepIsa, toDaily, type FundId, type Isa, type MEntry, type MLabResult, type MScore } from "@/game/merchant";
+import { withBookCheck } from "@/game/ledger";
+import { marketDay } from "@/game/market-day";
 import { getSql } from "./db";
+import { loadGuildWorld, saveWorldIfUnchanged } from "./world.server";
 
 export type MerchantState = { isa?: Isa; book: MEntry[]; lastRun?: Omit<MLabResult, "curve"> & { at: number } };
 
@@ -99,7 +102,7 @@ async function loadRecentPrices(days = 420): Promise<Partial<Record<FundId, { d:
  * Take a merchant post: save the prices and the lab's run, update the book,
  * and step the paper ISA through every trading day since its last.
  */
-export async function takeMerchantPost(body: unknown): Promise<{ prices: number; days: number; value?: number; satellite?: string }> {
+export async function takeMerchantPost(body: unknown): Promise<{ prices: number; days: number; value?: number; satellite?: string; guildDays: number; merchants: number }> {
   const o = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const saved = await savePrices(cleanPrices(o.prices));
   const state = await loadMerchant();
@@ -130,7 +133,39 @@ export async function takeMerchantPost(body: unknown): Promise<{ prices: number;
   }
   state.isa = isa;
   await saveMerchant(state);
-  return { prices: saved, days: stepped, value: isa?.history.at(-1)?.v, satellite: isa?.satellite.id };
+  const guild = await stepGuild(g, state.book);
+  return { prices: saved, days: stepped, value: isa?.history.at(-1)?.v, satellite: isa?.satellite.id, ...guild };
+}
+
+/**
+ * Step the guild's world through every market day since its last: each
+ * merchant's orders fill at the close and its ISA is valued
+ * (src/game/market-day.ts). The books are checked first; a mismatch halts
+ * new orders. Retries if the world changes underneath.
+ */
+async function stepGuild(g: ReturnType<typeof toDaily>, book: MEntry[]): Promise<{ guildDays: number; merchants: number }> {
+  if (!g.days.length) return { guildDays: 0, merchants: 0 };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const row = await loadGuildWorld();
+    const now = Date.now();
+    let world = row.refounded ? row.state : withBookCheck(row.state, row.ledger, now);
+    world = { ...world, book: book.slice(0, 10) };
+    const last = world.lastMarketDay;
+    // A new guild starts on the latest close; after that, every day since the last.
+    const start = last ? g.days.findIndex((d) => d > last) : g.days.length - 1;
+    let n = 0;
+    if (start >= 0) {
+      for (let i = start; i < g.days.length; i++) {
+        world = marketDay(world, g, i, now);
+        n++;
+      }
+    }
+    if (await saveWorldIfUnchanged(world, row.rev)) {
+      return { guildDays: n, merchants: world.subjects.filter((s) => s.state !== "condemned" && s.state !== "hanging").length };
+    }
+    await new Promise((r) => setTimeout(r, 250 + attempt * 400));
+  }
+  throw new Error("the world kept changing; the prices are saved and the guild steps on the next post");
 }
 
 export async function merchantRuns(limit = 10): Promise<{ id: number; createdAt: string; summary: MerchantState["lastRun"] }[]> {

@@ -1,4 +1,4 @@
-import { MAP_H, MAP_W, POI } from "./constants";
+import { MAP_H, MAP_W, POI } from "./constants.ts";
 
 export type PropDef = {
   id: string;

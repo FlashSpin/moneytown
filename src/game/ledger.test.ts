@@ -4,15 +4,17 @@ import {
   balancesOf,
   FEES,
   genesisPostings,
+  GENESIS,
   Journal,
   KING,
   MARKET,
   reconcile,
+  refoundPostings,
   unbalancedEvents,
   villagerAccount,
   withBookCheck,
 } from "./ledger.ts";
-import { deskStep, tradeStep, type Strategy, type Trader } from "./strategies.ts";
+import { fillTargets } from "./guild.ts";
 import type { GameState, Subject } from "./types.ts";
 
 const soul = (id: string, balance: number) => ({ id, firstName: id, balance }) as Subject;
@@ -38,32 +40,24 @@ describe("the ledger", () => {
     assert.equal(b.get("genesis"), -1_300);
   });
 
-  it("a trade's postings move exactly what the purse moved: fees to the exchange, P&L from the market", () => {
-    const strat: Strategy = { kind: "momentum", coins: ["SOL"], sizePct: 0.5, takeProfitPct: 2, stopLossPct: 1, shorts: true };
-    const t0: Trader = { id: "a", firstName: "A", balance: 100_000, strategy: strat };
-    const series = [100, 100, 100, 100, 100, 100, 101];
-    const open = tradeStep(t0, () => 101, () => series, 1, 20_000);
-    const close = tradeStep(open.trader, () => 103.5, () => series, 2, 20_000);
-    const j = new Journal({ at: 3, day: 1 }, "trade");
-    j.fill(open.event!);
-    j.fill(close.event!);
+  it("a fill's postings move exactly what the purse's cash moved: purchases to the market, costs to the fees", () => {
+    const price = (f: string) => ({ SPY: 500, IEF: 100 })[f as "SPY"] ?? 0;
+    const bought = fillTargets({ balance: 100_000, holdings: {} }, { SPY: 0.6, IEF: 0.4 }, price);
+    const sold = fillTargets(bought, { IEF: 1 }, price);
+    const j = new Journal({ at: 3, day: 1 }, "market");
+    for (const f of [...bought.fills, ...sold.fills]) j.trade({ t: 3, d: "2026-01-02", id: "a", name: "A", fund: f.fund, value: f.value, cost: f.cost, why: "test" });
     const b = balancesOf(j.postings);
-    assert.equal(b.get(villagerAccount("a")), close.trader.balance - 100_000);
-    assert.equal((b.get(FEES) ?? 0) + (b.get(MARKET) ?? 0), -(close.trader.balance - 100_000));
-    assert.equal(b.get(FEES), open.event!.fee! + close.event!.fee!);
+    assert.equal(b.get(villagerAccount("a")), sold.balance - 100_000);
+    assert.equal(b.get(FEES), [...bought.fills, ...sold.fills].reduce((n, f) => n + f.cost, 0));
+    assert.equal((b.get(MARKET) ?? 0) + (b.get(FEES) ?? 0), 100_000 - sold.balance);
     assert.deepEqual(unbalancedEvents(j.postings), []);
   });
 
-  it("a desk switch (close then open) posts both fills", () => {
-    const strat: Strategy = { kind: "reversion", coins: [], sizePct: 0.2, takeProfitPct: 2, stopLossPct: 1, shorts: true };
-    const px: Record<string, number> = { SOL: 100, ETH: 50 };
-    const t0: Trader = { id: "a", firstName: "A", balance: 100_000, strategy: strat };
-    const a = deskStep(t0, { action: "buy", coin: "SOL", chance: 0.8, why: "x" }, (c) => px[c]!, 0, 20_000);
-    px.SOL = 97;
-    const b = deskStep(a.trader, { action: "short", coin: "ETH", chance: 0.8, why: "y" }, (c) => px[c]!, 1, 20_000);
-    const j = new Journal({ at: 3, day: 1 }, "trade");
-    for (const e of [...a.events, ...b.events]) j.fill(e);
-    assert.equal(balancesOf(j.postings).get(villagerAccount("a")), b.trader.balance - 100_000);
+  it("the re-founding closes every old balance back to genesis", () => {
+    const old = balancesOf(genesisPostings(world(1_000, [soul("a", 300), soul("b", 50)]), 5));
+    const closed = balancesOf([...genesisPostings(world(1_000, [soul("a", 300), soul("b", 50)]), 5), ...refoundPostings(old, 6, 3)]);
+    for (const [account, v] of closed) assert.equal(v, 0, account);
+    assert.equal(closed.get(GENESIS), 0);
   });
 
   it("reconciles the world against the ledger, and catches a purse that doesn't match", () => {

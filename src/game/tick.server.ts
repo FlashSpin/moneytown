@@ -1,256 +1,160 @@
 /**
- * The daily tick — server-only, called once a day by the `/api/tick` cron.
- * Dawn closes the old day and opens the new one:
- *   1. strike yesterday's hanged from the roll,
- *   2. mark every position to the live price (src/game/review.server.ts),
- *   3. settle the day: the King's tax on each villager's PROFIT, upkeep into
- *      the treasury, and the gallows for any purse below the floor,
- *   4. the treasury opens new souls by its fixed rule,
- *   5. the King's council sets the new day's tax, favoured market and every
- *      villager's orders (royal decrees from the seal-bearer win).
- * Between dawns, /api/review re-marks and re-orders every few hours.
+ * Dawn — server-only, called once a day by the `/api/tick` cron. Money moves
+ * on market days (src/game/market-day.ts, after each close); dawn keeps the
+ * guild's calendar:
+ *   1. strike yesterday's condemned from the roll,
+ *   2. the gallows for any merchant whose ISA has fallen below RUIN_SHARE of
+ *      its stake (its funds are sold at the latest close, the rest to the crown),
+ *   3. the season: every SEASON_DAYS days the guild is judged against a
+ *      60/40, and each merchant pays the guild's dues on its season gain,
+ *   4. merchants far behind the 60/40 are retrained,
+ *   5. the treasury stakes new merchants by its fixed rule,
+ *   6. every COUNCIL_EVERY days the King advises and the merchants choose
+ *      their strategies (royal decrees from the seal-bearer win).
  */
-import { loadTape } from "@/lib/tape.server";
-import { HANG_BELOW_GBP, LIVING_CAP } from "./constants";
+import { LIVING_CAP, STAKE_PENCE } from "./constants";
 import { defaultKingPolicy, kingSpawnCount } from "./economy";
 import { kingFlavor } from "./brains";
-import { priceOf } from "./dawn";
-import { councilStrategies, isLiving, wealthLine } from "./review.server";
-import { Journal, KING, MARKET, villagerAccount, withPostings } from "./ledger";
-import { strategyChanges } from "./paper";
+import { raiseCash, retrain, RUIN_SHARE, strategyForNewcomer, strategyLabel } from "./guild";
+import { Journal, KING, villagerAccount, withPostings } from "./ledger";
+import type { FundId } from "./merchant";
 import { advanceSeason, checkMilestones, parishWealth, SEASONS_KEPT, type DawnBook } from "./progress";
-import { crowdOf, needsRetraining, trainNewcomer } from "./lab";
-import { BAR_LABEL, defaultStrategy, genesOf, unrealized } from "./strategies";
-import { coinsNeeded } from "./trade.server";
-import { settleDay, temperOf } from "./trading";
+import { COUNCIL_EVERY, councilStrategies, isLiving, wealthLine } from "./review.server";
+import { temperOf } from "./trading";
 import { GALLOWS_DROP } from "./town";
 import type { GameState, King, Subject } from "./types";
 import { makeSubject, pushLog, withTotals } from "./world";
-import { formatGbp, gbpToSats, mulberry32, rentSats, satsToGbp, stakeSats, tapeGbp } from "./wallets";
+import { money, mulberry32 } from "./wallets";
 
 export async function runDailyTick(prev: GameState): Promise<GameState> {
-  let tape = prev.tape;
-  try {
-    tape = await loadTape(coinsNeeded(prev));
-  } catch {
-    tape = { ...prev.tape, dark: true, source: "dark" };
-  }
-  // Through a price outage the market keeps its stalls.
-  if (tape.dark && !tape.coins) tape = { ...tape, coins: prev.tape.coins };
-
   const now = Date.now();
   const day = prev.day + 1;
   const rng = mulberry32(prev.seed + prev.day * 1009 + 7);
-  const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(tape)));
   let log = prev.log;
   const push = (kind: Parameters<typeof pushLog>[1], text: string) => {
     log = pushLog({ day, log }, kind, text);
   };
-
-  // Anyone condemned yesterday has had their day to be seen and is struck
-  // from the ledger now (the client still plays one hang animation first).
-  for (const s of prev.subjects.filter((x) => !isLiving(x))) push("death", `${s.firstName}'s name is struck from the ledger.`);
-  const marked = prev.subjects.filter(isLiving);
-
-  // Settle the day that just ended, at the tax rate that ruled it. Only banked
-  // (closed-trade) profit is taxed; open trades carry into the new day.
-  push("dawn", `Dawn of day ${day}. The King takes ${Math.round(prev.taxRate * 100)}% of yesterday's profits.`);
-  const rent = rentSats(tape);
-  const floor = gbpToSats(HANG_BELOW_GBP, tapeGbp(tape));
-  let kingBalance = prev.king.balance;
+  const price = (f: FundId) => prev.board?.funds[f]?.close ?? 0;
+  const bench = prev.bench?.sf ?? 100;
+  const book: DawnBook = { day: prev.day, dues: 0, stakes: 0, gallows: 0 };
   const journal = new Journal({ at: now, day }, "dawn");
-  const book: DawnBook = { day: prev.day, banked: 0, tax: 0, upkeep: 0, stakes: 0, gallows: 0 };
+  let kingBalance = prev.king.balance;
+
+  push("dawn", `Dawn of day ${day}.${prev.board ? ` The market board stands at the close of ${prev.board.d}.` : ""}`);
+  for (const s of prev.subjects.filter((x) => !isLiving(x))) push("death", `${s.firstName}'s name is struck from the ledger.`);
+
+  // The gallows: an ISA fallen below RUIN_SHARE of its stake is sold up, and its money goes to the crown.
   let hangedToday = 0;
-  const settled: Subject[] = [];
-  for (const sub of marked) {
-    const dues = settleDay({
-      balance: sub.balance,
-      dayStart: sub.dayStart ?? sub.balance,
-      taxRate: prev.taxRate,
-      rent,
-      floor,
-      carry: sub.lossCarry,
-    });
-    kingBalance += dues.tithe + dues.rentPaid;
-    book.banked += dues.profit;
-    book.tax += dues.tithe;
-    book.upkeep += dues.rentPaid;
-    journal.transfer(villagerAccount(sub.id), KING, dues.tithe, "tax", { memo: `${Math.round(prev.taxRate * 100)}% of the day's profit` });
-    journal.transfer(villagerAccount(sub.id), KING, dues.rentPaid, "upkeep");
-    // The gallows judge the whole purse, open trade included at today's price.
-    const open = sub.position ? unrealized(sub.position, priceOf(tape, sub.position.coin)) : 0;
-    const hanged = dues.balance + open < floor;
-    const sign = dues.profit >= 0 ? "+" : "-";
-    push(
-      "subject",
-      `${sub.firstName}: ${sign}${gbp(Math.abs(dues.profit))} on the day; tax ${gbp(dues.tithe)}${
-        dues.offset > 0 ? ` (${gbp(dues.offset)} of the profit sheltered by earlier losses)` : ""
-      }, upkeep ${gbp(dues.rentPaid)}${dues.profit < 0 ? `; ${gbp(dues.carry)} of losses carried forward` : ""}.`,
-    );
-    if (hanged) {
-      hangedToday++;
-      book.gallows += Math.max(0, dues.balance + open);
-      kingBalance += Math.max(0, dues.balance + open);
-      // The purse goes to the crown, and its open trade is settled at today's price against the market.
-      journal.transfer(villagerAccount(sub.id), KING, dues.balance, "gallows", { memo: `${sub.firstName} hanged` });
-      journal.transfer(MARKET, KING, Math.max(0, dues.balance + open) - dues.balance, "gallows", {
-        coin: sub.position?.coin,
-        memo: `${sub.firstName}'s open trade settled at the mark`,
-      });
-      push("death", `${sub.firstName}'s purse has fallen below £${HANG_BELOW_GBP}. They are walked to the gallows.`);
-      settled.push({
-        ...sub,
-        balance: 0,
-        side: "flat",
-        position: undefined,
-        destX: GALLOWS_DROP.x,
-        destY: GALLOWS_DROP.y,
-        state: "condemned",
-        hangT: 0,
-      });
-    } else {
-      settled.push({ ...sub, balance: dues.balance, dayStart: dues.balance, trades: 0, lossCarry: dues.carry || undefined });
+  let subjects: Subject[] = prev.subjects.filter(isLiving).map((s) => {
+    const worth = s.worth ?? s.balance;
+    const stake = s.track?.start ?? 0;
+    if (!(stake > 0) || worth >= stake * RUIN_SHARE) return s;
+    const sold = raiseCash(s, Number.MAX_SAFE_INTEGER, price);
+    for (const f of sold.fills) {
+      journal.trade({ t: now, d: prev.board?.d ?? "", id: s.id, name: s.firstName, fund: f.fund, value: f.value, cost: f.cost, why: "sold up at the gallows" });
     }
+    const cash = sold.next.balance;
+    journal.transfer(villagerAccount(s.id), KING, cash, "gallows", { memo: `${s.firstName}'s ISA, sold up` });
+    kingBalance += cash;
+    book.gallows += cash;
+    hangedToday++;
+    push("death", `${s.firstName}'s ISA has fallen below half its stake. The funds are sold and ${money(cash)} goes to the crown; ${s.firstName} is walked to the gallows.`);
+    return { ...sold.next, balance: 0, holdings: {}, pending: undefined, worth: 0, destX: GALLOWS_DROP.x, destY: GALLOWS_DROP.y, state: "condemned" as const, hangT: 0 };
+  });
+
+  // The season: judged against the 60/40; at its close, the guild's dues on each merchant's gain.
+  const wealth = parishWealth({ king: { ...prev.king, balance: kingBalance }, subjects });
+  const seasonStep = advanceSeason(prev.season, { day, at: now, wealth, bench, hangedToday });
+  for (const line of seasonStep.notes) push("crown", line);
+  if (seasonStep.result || !prev.season) {
+    subjects = subjects.map((s) => {
+      if (!isLiving(s)) return s;
+      const worth = s.worth ?? s.balance;
+      const gain = worth - (s.seasonStart ?? worth);
+      const due = seasonStep.result && gain > 0 ? Math.floor(gain * prev.taxRate) : 0;
+      if (!(due > 0)) return { ...s, seasonStart: worth };
+      const raised = raiseCash(s, due, price);
+      for (const f of raised.fills) {
+        journal.trade({ t: now, d: prev.board?.d ?? "", id: s.id, name: s.firstName, fund: f.fund, value: f.value, cost: f.cost, why: "sold to pay the guild's dues" });
+      }
+      const paid = Math.min(due, raised.next.balance);
+      journal.transfer(villagerAccount(s.id), KING, paid, "tax", { memo: `the guild's dues: ${Math.round(prev.taxRate * 100)}% of the season's gain` });
+      kingBalance += paid;
+      book.dues += paid;
+      const after = { ...raised.next, balance: raised.next.balance - paid };
+      const newWorth = (after.worth ?? worth) - paid - raised.fills.reduce((n, f) => n + f.cost, 0);
+      push("subject", `${s.firstName} grew ${money(gain)} this season and pays ${money(paid)} in dues.`);
+      return { ...after, worth: newWorth, seasonStart: newWorth };
+    });
   }
 
-  // The treasury opens new souls by its fixed rule.
-  const stake = stakeSats(tape);
-  const alive = settled.filter(isLiving);
+  // Merchants far behind the 60/40 are retrained.
+  subjects = subjects.map((s) => {
+    if (!isLiving(s)) return s;
+    const r = retrain(s, bench, prev.book ?? []);
+    if (!r) return s;
+    push("subject", `${s.firstName} is ${r.why}, and is retrained by the guild in ${strategyLabel(r.strategy)}.`);
+    return { ...s, strategy: r.strategy };
+  });
+
+  // The treasury stakes new merchants by its fixed rule.
+  const alive = subjects.filter(isLiving);
   const count = kingSpawnCount({
     treasury: kingBalance,
     living: alive.length,
     unproven: alive.filter((x) => x.bornDay === prev.day).length,
-    policy: defaultKingPolicy(stake, LIVING_CAP),
+    policy: defaultKingPolicy(STAKE_PENCE, LIVING_CAP),
   });
-  const taken = new Set(settled.map((x) => x.firstName));
+  const taken = new Set(subjects.map((x) => x.firstName));
   for (let i = 0; i < count; i++) {
-    const child = makeSubject(rng, taken, stake, day);
-    // Each newcomer is trained in a slightly adjusted copy of the guild book's best.
-    const trained = trainNewcomer(
-      prev.lab?.pool ?? [],
-      rng,
-      defaultStrategy(child.id, child.temper ?? temperOf(child.id), []),
-      null,
-      crowdOf(settled.filter(isLiving).map((x) => x.strategy)),
-    );
-    if (trained) child.strategy = trained;
-    child.dayStart = stake;
-    kingBalance -= stake;
-    book.stakes += stake;
-    journal.transfer(KING, villagerAccount(child.id), stake, "stake", { memo: `${child.firstName} opened from the treasury` });
-    settled.push(child);
-    push(
-      "crown",
-      `The King opens ${child.firstName} from the treasury, staked for trade${trained ? ` and trained in the guild's ${trained.kind} (${trained.genome?.book}, ${BAR_LABEL[genesOf(trained).bar]} bars)` : ""}.`,
-    );
+    const child = makeSubject(rng, taken, STAKE_PENCE, day, bench);
+    child.strategy = strategyForNewcomer(child.temper ?? temperOf(child.id), prev.book ?? [], rng);
+    kingBalance -= STAKE_PENCE;
+    book.stakes += STAKE_PENCE;
+    journal.transfer(KING, villagerAccount(child.id), STAKE_PENCE, "stake", { memo: `${child.firstName} staked from the treasury` });
+    subjects.push(child);
+    push("crown", `The King stakes ${child.firstName} ${money(STAKE_PENCE)} from the treasury for an ISA, invested by ${strategyLabel(child.strategy)}.`);
   }
 
-  // The strategy council for the new day.
-  const opening: GameState = { ...prev, day, tape, king: { ...prev.king, balance: kingBalance } };
-  const review = await councilStrategies(opening, settled, tape, { dawn: true, rng, now });
-  // The guild retrains strugglers: a villager losing money (or on a retired guild strategy) gets a book strategy instead.
-  const pool = prev.lab?.pool ?? [];
-  if (pool.length) {
-    review.subjects = review.subjects.map((s) => {
-      if (!isLiving(s)) return s;
-      const why = needsRetraining(s, pool);
-      if (!why) return s;
-      const others = review.subjects.filter((x) => x.id !== s.id && isLiving(x)).map((x) => x.strategy);
-      const trained = trainNewcomer(pool, rng, s.strategy ?? defaultStrategy(s.id, s.temper ?? temperOf(s.id), []), null, crowdOf(others));
-      if (!trained || trained.genome?.book === (s.strategy?.genome?.book ?? s.strategy?.genome?.id)) return s;
-      push("subject", `${s.firstName} ${why}, and is retrained by the guild in its ${trained.kind} (${trained.genome?.book}, ${BAR_LABEL[genesOf(trained).bar]} bars).`);
-      // The new strategy is judged on its own trades, from here.
-      return { ...s, strategy: { ...trained, note: "Retrained by the guild.", since: s.record ?? { wins: 0, losses: 0, pnl: 0 } } };
-    });
-  }
-  const council = review.council;
-  const brain = review.parish?.brain ?? council?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" };
-
-  // A standing royal decree (from the seal-bearer's petition) outranks the King's AI.
+  // The council, every few days (strategies for an ISA shouldn't change often).
+  const councilDue = !prev.council || day % COUNCIL_EVERY === 1;
+  const opening: GameState = { ...prev, day, king: { ...prev.king, balance: kingBalance } };
+  const review = councilDue ? await councilStrategies(opening, subjects, { dawn: true, rng, now }) : null;
+  const council = review?.council ?? null;
   const taxRate = prev.decree?.taxRate ?? council?.taxRate ?? prev.taxRate;
-  const favorAsset = prev.decree?.favorAsset ?? council?.favorAsset ?? prev.king.favorAsset ?? "BTC";
-  push("crown", `The King's tax for day ${day} is ${Math.round(taxRate * 100)}% of profits. He favours ${favorAsset}.`);
-  const flavor = council?.say || kingFlavor(favorAsset);
-  push("crown", flavor);
-  push("system", review.summary);
-  push("system", wealthLine(review.subjects, tape));
-  const net = book.tax + book.upkeep + book.gallows - book.stakes;
-  push(
-    "crown",
-    `The treasury's day: +${gbp(book.tax)} tax, +${gbp(book.upkeep)} upkeep${book.gallows ? `, +${gbp(book.gallows)} from the gallows` : ""}${
-      book.stakes ? `, -${gbp(book.stakes)} to stake new souls` : ""
-    } — ${net >= 0 ? "+" : "-"}${gbp(Math.abs(net))} in all. The parish ${book.banked >= 0 ? "banked" : "lost"} ${gbp(Math.abs(book.banked))} on the day.`,
-  );
+  const favorAsset = prev.decree?.favorAsset ?? council?.favorAsset ?? prev.king.favorAsset ?? "SPY";
+  if (review) {
+    push("crown", `The guild's dues are ${Math.round(taxRate * 100)}% of each merchant's season gain. The King favours ${favorAsset}.`);
+    push("crown", council?.say || kingFlavor(favorAsset));
+    push("system", review.summary);
+  }
+  const finalSubjects = review?.subjects ?? subjects;
+  push("system", wealthLine(finalSubjects));
+  push("crown", `The treasury's day: ${book.dues ? `+${money(book.dues)} dues, ` : ""}${book.gallows ? `+${money(book.gallows)} from the gallows, ` : ""}${book.stakes ? `-${money(book.stakes)} to stake new merchants, ` : ""}now ${money(kingBalance)}.`);
 
-  // The season: the parish's objective, judged every few days on its whole wealth.
-  const px = (coin: string) => priceOf(tape, coin);
-  const wealth = parishWealth({ king: { ...prev.king, balance: kingBalance }, subjects: review.subjects }, px);
-  const seasonStep = advanceSeason(prev.season, { day, at: now, wealth, hangedToday, money: gbp });
-  for (const line of seasonStep.notes) push("crown", line);
   const seasons = seasonStep.result ? [seasonStep.result, ...(prev.seasons ?? [])].slice(0, SEASONS_KEPT) : prev.seasons;
-
-  const king: King = {
-    ...prev.king,
-    balance: kingBalance,
-    lastAction: "hold",
-    lastFlavor: flavor,
-    favorAsset,
-  };
-
+  const king: King = { ...prev.king, balance: kingBalance, favorAsset, lastFlavor: council?.say || kingFlavor(favorAsset) };
   const next: GameState = {
     ...withPostings(prev, journal.postings),
     day,
-    tape,
     taxRate,
-    subjects: review.subjects,
+    subjects: finalSubjects,
     king,
     log,
     season: seasonStep.season,
     seasons,
     lastDawn: book,
-    strategyChanges: [...(prev.strategyChanges ?? []), ...strategyChanges(settled, review.subjects, "the dawn council", day, now)],
     seed: prev.seed + 17,
-    brain,
-    speech: review.speech,
-    speechAt: now,
-    council: review.record,
-    lastReviewAt: now,
+    ...(review
+      ? {
+          brain: review.parish?.brain ?? council?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" },
+          speech: review.speech,
+          speechAt: now,
+          council: review.record,
+        }
+      : {}),
   };
   const reached = checkMilestones(next, now);
   for (const line of reached.notes) log = pushLog({ day, log }, "crown", line);
   return withTotals({ ...next, log, milestones: reached.milestones });
-}
-
-/**
- * A strategy review between dawns: the King advises and the villagers choose
- * their strategies again. No dues are charged — those are settled at dawn —
- * and no trades are made here; the 5-minute tick trades the new strategies.
- */
-export async function runReview(prev: GameState): Promise<GameState> {
-  let tape = await loadTape(coinsNeeded(prev)).catch(() => ({ ...prev.tape, dark: true, source: "dark" }));
-  if (tape.dark && !tape.coins) tape = { ...tape, coins: prev.tape.coins };
-  const now = Date.now();
-  const rng = mulberry32(prev.seed + Math.floor(now / 60_000));
-  const review = await councilStrategies({ ...prev, tape }, prev.subjects, tape, { dawn: false, rng, now });
-
-  let log = prev.log;
-  const push = (kind: Parameters<typeof pushLog>[1], text: string) => {
-    log = pushLog({ day: prev.day, log }, kind, text);
-  };
-  if (review.council?.say) push("crown", review.council.say);
-  push("system", review.summary);
-  push("system", wealthLine(review.subjects, tape));
-
-  return withTotals({
-    ...prev,
-    tape,
-    subjects: review.subjects,
-    log,
-    brain: review.parish?.brain ?? review.council?.brain ?? prev.brain,
-    speech: review.speech,
-    speechAt: now,
-    council: review.record,
-    lastReviewAt: now,
-    strategyChanges: [...(prev.strategyChanges ?? []), ...strategyChanges(prev.subjects, review.subjects, "the strategy council", prev.day, now)],
-  });
 }

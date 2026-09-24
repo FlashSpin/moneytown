@@ -4,35 +4,24 @@
  * what the rules allow (known names only, tax clamped to the legal range).
  */
 import { TAX_MAX, TAX_MIN } from "./constants.ts";
-import type { Asset } from "./dawn.ts";
-import { STRATEGY_KINDS, type StrategyKind } from "./strategies.ts";
+import { FUND_IDS, type FundId } from "./merchant.ts";
 
 /** A proposed change: a new value, "auto" (hand the choice back to the King's AI at dawn), or no change. */
 export type DecreeChange<T> = T | "auto" | null;
 
 export type Command = {
   summon: number;
-  /** What the summoned should trade: a guild-book id or a strategy kind (null = the book's best). */
+  /** What the summoned should invest by: a preset or guild-book strategy id (null = its temperament's). */
   summonAs: string | null;
   banish: string[];
-  /** Tax as a fraction 0..TAX_MAX. */
+  /** The guild's dues as a fraction 0..TAX_MAX. */
   taxRate: DecreeChange<number>;
-  favorAsset: DecreeChange<Asset>;
+  favorAsset: DecreeChange<FundId>;
   /** New strategies for named villagers (raw; tidied against the market when applied). */
   strategies: { name: string; raw: Record<string, unknown> }[];
-  /** Stop all new trading (true), resume it (false), or no change (null). */
+  /** Stop all new orders (true), resume them (false), or no change (null). */
   halt: boolean | null;
-  /** Strategies to pause (none of their trades open) and to let trade again. */
-  pause: StrategyKind[];
-  resume: StrategyKind[];
 };
-
-/** Strategy kinds named in `v` (a list or one name); unknown names are dropped. */
-export function parseKinds(v: unknown): StrategyKind[] {
-  const list = Array.isArray(v) ? v : typeof v === "string" && v.trim() ? v.split(/[,\s]+/) : [];
-  const out = list.map((x) => String(x).trim().toLowerCase()).filter((x): x is StrategyKind => STRATEGY_KINDS.includes(x as StrategyKind));
-  return [...new Set(out)];
-}
 
 /** "halt" / "resume" (or true/false) → a halt command; anything else is no change. */
 export function parseHalt(v: unknown): boolean | null {
@@ -44,7 +33,7 @@ export function parseHalt(v: unknown): boolean | null {
 }
 
 /** Standing royal orders the daily tick honours instead of the King's AI. */
-export type Decree = { taxRate?: number; favorAsset?: Asset; paused?: StrategyKind[] };
+export type Decree = { taxRate?: number; favorAsset?: FundId };
 
 export function parseTaxPercent(v: unknown): DecreeChange<number> {
   if (v == null || v === "") return null;
@@ -56,12 +45,12 @@ export function parseTaxPercent(v: unknown): DecreeChange<number> {
   return Math.round(Math.min(TAX_MAX, Math.max(TAX_MIN, frac)) * 100) / 100;
 }
 
-/** A favoured coin: must be one the market lists (`coins`), or "auto". */
-export function parseFavor(v: unknown, coins: Asset[]): DecreeChange<Asset> {
+/** A favoured fund: one of the guild's funds, or "auto". */
+export function parseFavor(v: unknown): DecreeChange<FundId> {
   if (v == null || v === "") return null;
   const s = String(v).trim().toUpperCase();
   if (s === "AUTO") return "auto";
-  return coins.includes(s) ? s : null;
+  return FUND_IDS.includes(s as FundId) ? (s as FundId) : null;
 }
 
 /** The AI's raw JSON → a command. Unknown or malformed fields mean "no change". */
@@ -75,10 +64,7 @@ export function parseCommand(
     strategies?: unknown;
     halt?: unknown;
     trading?: unknown;
-    pause?: unknown;
-    resume?: unknown;
   },
-  coins: Asset[],
 ): Command {
   const summon = Number(obj.summon);
   const banish = Array.isArray(obj.banish)
@@ -91,7 +77,7 @@ export function parseCommand(
     summonAs: typeof obj.summonAs === "string" && /^[a-z0-9-]{3,32}$/i.test(obj.summonAs.trim()) ? obj.summonAs.trim() : null,
     banish,
     taxRate: parseTaxPercent(obj.taxRate),
-    favorAsset: parseFavor(obj.favorAsset, coins),
+    favorAsset: parseFavor(obj.favorAsset),
     strategies: Array.isArray(obj.strategies)
       ? obj.strategies
           .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
@@ -100,8 +86,6 @@ export function parseCommand(
           .slice(0, 24)
       : [],
     halt: parseHalt(obj.halt ?? obj.trading),
-    pause: parseKinds(obj.pause),
-    resume: parseKinds(obj.resume),
   };
 }
 
@@ -123,8 +107,6 @@ export function needsSeal(c: Command): boolean {
     c.taxRate !== null ||
     c.favorAsset !== null ||
     c.strategies.length > 0 ||
-    c.halt !== null ||
-    c.pause.length > 0 ||
-    c.resume.length > 0
+    c.halt !== null
   );
 }

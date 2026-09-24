@@ -12,7 +12,7 @@ async function tick(request: Request): Promise<Response> {
   const { bearerOk } = await import("@/lib/seal.server");
   if (!bearerOk(request)) return new Response("Unauthorized", { status: 401 });
 
-  const { loadWorldRow, saveNewDay } = await import("@/lib/world.server");
+  const { loadGuildWorld, saveNewDay } = await import("@/lib/world.server");
   const { runDailyTick } = await import("@/game/tick.server");
   const { recordRun } = await import("@/lib/jobs.server");
   const { log, requestIdOf } = await import("@/lib/log.server");
@@ -20,7 +20,7 @@ async function tick(request: Request): Promise<Response> {
   const forced = new URL(request.url).searchParams.get("force") === "1";
 
   const result = await recordRun<{ status: number; body: Record<string, unknown> }>("dawn", { requestId, source: "cron" }, async () => {
-    let row = await loadWorldRow();
+    let row = await loadGuildWorld();
     const fromDay = row.day;
     const hoursSinceUpdate = (Date.now() - new Date(row.updated_at).getTime()) / 3_600_000;
     if (hoursSinceUpdate < 20 && !forced) {
@@ -30,20 +30,18 @@ async function tick(request: Request): Promise<Response> {
       return { outcome: "skipped", result: { status: 200, body: { ok: true, skipped: true, day: row.day } } };
     }
     // The new day saves only if the row is unchanged and still on `fromDay`, so
-    // two overlapping calls can't both advance it. A trade tick or petition
+    // two overlapping calls can't both advance it. A market day or petition
     // landing meanwhile just means dawn is re-run on the fresh row.
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) {
-        row = await loadWorldRow();
+        row = await loadGuildWorld();
         if (row.day !== fromDay) return { outcome: "skipped", result: { status: 200, body: { ok: true, skipped: true, day: row.day } } };
       }
       const next = await runDailyTick(row.state);
       if (await saveNewDay(next, row.rev)) {
-        // Once a day, drop price history and job runs past their retention.
-        const { pruneHistory } = await import("@/lib/history.server");
+        // Once a day, drop job runs past their retention.
         const { pruneJobRuns } = await import("@/lib/jobs.server");
-        const { prunePaperOrders } = await import("@/lib/paper.server");
-        await Promise.all([pruneHistory(), pruneJobRuns(), prunePaperOrders()]).catch((e: unknown) =>
+        await pruneJobRuns().catch((e: unknown) =>
           log("warn", "dawn.prune_failed", { requestId, error: e instanceof Error ? e.message : String(e) }),
         );
         const living = next.subjects.filter((s) => s.state !== "condemned" && s.state !== "hanging").length;

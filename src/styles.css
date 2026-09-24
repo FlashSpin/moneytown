@@ -896,7 +896,7 @@
   color: var(--color-ink-soft);
 }
 
-/* ── Strategy backtests (/backtest) ─────────────────────────────────────── */
+/* ── Report pages (/isa) ─────────────────────────────────────────────── */
 .bt-page {
   --bt-a: #2f5f9e;
   --bt-b: #b3702a;
@@ -1941,7 +1941,7 @@ summary.trade-row:hover {
   gap: var(--space-2);
 }
 
-/* ── Paper trading (/paper) ─────────────────────────────────────────────── */
+/* ── Report tables ─────────────────────────────────────────────────────── */
 .readiness-gates {
   display: flex;
   flex-direction: column;

@@ -1,50 +1,48 @@
 import { SHOUT_LIFE, SPEECH_LIFE } from "./constants";
-import type { Asset } from "./dawn";
+import { FUNDS, type FundId } from "./merchant";
 import type { SpeechLine } from "./types";
 import { pick, uid } from "./wallets";
 
 const SQUARE_MUTTER = [
-  "The markets move whether we watch or no. Mind thy position.",
-  "The King's tax comes due. Trade well, or the rope.",
-  "Keep thy purse close, neighbour.",
-  "Long, short, or flat — choose, and live with it.",
-  "The chain is watch-only; no keys in this parish.",
-  "If the purse cannot pay the tax, we hang.",
-  "Twenty pound to start. Link thy agent, and trade wisely.",
+  "The markets move whether we watch or no. Mind thy funds.",
+  "A thousand pound in an ISA — invest it well, and let time work.",
+  "Keep thy money spread, neighbour. No single storm sinks a wide purse.",
+  "Shares for growth, bonds for ballast, gold for the storm.",
+  "The guild's dues are only on gains. Grow, and pay gladly.",
+  "Trade seldom. Every trade costs a little.",
+  "Beat the sixty-forty, and the season is ours.",
 ];
 
 const PAIR_TALK: [string, string][] = [
-  ["Hast thou made any money on the markets?", "Some days the tape favours me, some days not."],
-  ["The tax is heavy upon us.", "Then trade well beyond these walls, or the rope shall."],
-  ["The King linked an agent to me.", "Think, then, and mind the purse — or hang."],
-  ["The chain is watch-only, neighbour.", "Aye — no keys are kept here."],
-  ["Shall we sit flat?", "Sit too long and the tax still comes. Choose a side."],
+  ["Hast thou grown thine ISA this month?", "A little. The bonds held while the shares wobbled."],
+  ["Art thou above the sixty-forty?", "By a whisker — ask me again at the season's end."],
+  ["The trend guard sold my shares.", "Aye — it steps aside when prices fall below their average."],
+  ["Why not put it all in one fund?", "Because one fund can fall by half. I have seen it."],
+  ["Momentum has me in gold now.", "Then gold has been the strongest of late."],
 ];
 
 const VILLAGER_SHOUTS = [
-  "Hear the square! Watch the tape, mind thy purse!",
-  "Neighbours — trade with care, or the tax shall take us!",
-  "Watch the chain! That is real coin!",
-  "Twenty pound to start — do not waste it on a bad bet!",
+  "Hear the square! Spread thy money, mind the costs!",
+  "Neighbours — the funds closed higher today!",
+  "Patience, all! An ISA grows over years, not days!",
+  "Beat the sixty-forty, and the season is won!",
 ];
 
 const KING_SHOUTS = [
-  "Hear ye! Trade the markets with care. The purse that gambles ill shall hang.",
-  "My treasury opens new souls only while the old ones prove they can trade. Prosper, or the rope.",
-  "My subjects — I favour a market. Weigh my counsel, but think for yourselves.",
-  "Peace in the parish. Talk, trade well, pay the tax.",
+  "Hear ye! Invest with care and patience. The purse that squanders its stake shall hang.",
+  "My treasury stakes new merchants while the old ones prove they can grow their ISAs.",
+  "My subjects — I favour a fund. Weigh my counsel, but think for yourselves.",
+  "Peace in the guild. Invest wisely, trade seldom, pay the dues.",
 ];
 
 const KING_ASIDES = [
-  "I command these wallets, and my treasury opens new souls for those who trade well.",
-  "Pay my tax, or the rope. Mind the markets.",
-  "The treasury opens new souls of its own accord. I set the favoured market and command.",
+  "I stake these merchants, and my treasury opens more for those who grow their funds.",
+  "Beat the sixty-forty, and the guild prospers.",
+  "The treasury stakes new merchants of its own accord. I set the favoured fund and command.",
 ];
 
-const ASSET_NOUN: Record<Asset, string> = { BTC: "Bitcoin", ETH: "Ether", SOL: "Solana" };
-
-export function kingFlavor(favorAsset: Asset): string {
-  return `The King commands the parish and favours ${ASSET_NOUN[favorAsset] ?? favorAsset} this day. His treasury opens new souls only while they trade well.`;
+export function kingFlavor(favorAsset: FundId): string {
+  return `The King commands the guild and favours ${FUNDS[favorAsset]?.name ?? favorAsset} this day. His treasury stakes new merchants while the guild grows.`;
 }
 
 function line(

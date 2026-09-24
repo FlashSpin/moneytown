@@ -1,6 +1,6 @@
 import { KING_DRAW, MAP_H, MAP_W, SUBJECT_DRAW } from "./constants";
-import { stallCoins } from "./dawn";
-import { formatCoinPrice } from "@/lib/market";
+import { formatFundPrice } from "@/lib/market";
+import { FUND_IDS } from "./merchant";
 import { AWNINGS, SHOP_SLOTS } from "./shops";
 import {
   DEFAULT_CAM,
@@ -11,8 +11,8 @@ import {
   type Cam,
   type PropDef,
 } from "./town";
-import type { King, SpeechLine, Subject, Tape } from "./types";
-import { formatPurse } from "./wallets";
+import type { Board, King, SpeechLine, Subject } from "./types";
+import { money } from "./wallets";
 
 
 export type Assets = {
@@ -273,8 +273,8 @@ function drawBubble(
   ctx.restore();
 }
 
-/** A market stall in world space: counter, posts, a striped awning, and the coin's badge. */
-function drawStall(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, coin: string) {
+/** A market stall in world space: counter, posts, a striped awning, and the fund's badge. */
+function drawStall(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, fund: string) {
   ctx.save();
   // Shadow
   ctx.fillStyle = "rgba(20, 14, 8, 0.28)";
@@ -312,7 +312,7 @@ function drawStall(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
   ctx.strokeStyle = "rgba(44, 36, 22, 0.55)";
   ctx.lineWidth = 1.2;
   ctx.strokeRect(x - 38, top, 76, bottom - top);
-  // Coin badge on the counter
+  // Fund badge on the counter
   ctx.beginPath();
   ctx.arc(x, y - 7, 10, 0, Math.PI * 2);
   ctx.fillStyle = "#d9b24a";
@@ -321,10 +321,10 @@ function drawStall(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.fillStyle = "#3a2a0e";
-  ctx.font = `700 ${coin.length > 3 ? 6 : 7}px "IBM Plex Mono", monospace`;
+  ctx.font = `700 ${fund.length > 3 ? 6 : 7}px "IBM Plex Mono", monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(coin.slice(0, 5), x, y - 6.5);
+  ctx.fillText(fund.slice(0, 5), x, y - 6.5);
   ctx.restore();
 }
 
@@ -334,18 +334,17 @@ function drawShopSigns(
   scale: number,
   ox: number,
   oy: number,
-  world: Tape,
-  live: Tape | null,
+  board: Board | undefined,
 ) {
-  const coins = stallCoins(world, live).slice(0, SHOP_SLOTS.length);
-  const tape = live && !live.dark ? live : world;
+  const funds = FUND_IDS.slice(0, SHOP_SLOTS.length);
+  const dark = !board;
   const compact = scale < 0.6;
-  coins.forEach((coin, i) => {
+  funds.forEach((fund, i) => {
     const slot = SHOP_SLOTS[i]!;
-    const info = tape.assets[coin] ?? world.assets[coin];
+    const info = board?.funds[fund];
     const scr = worldToScreen(slot.x, slot.y - 60, scale, ox, oy);
-    const price = tape.dark ? "—" : formatCoinPrice(info?.usd ?? 0);
-    const chg = info?.change24h ?? 0;
+    const price = dark || !info ? "—" : formatFundPrice(info.close);
+    const chg = (info?.change1d ?? 0) * 100;
     const arrow = chg >= 0 ? "▲" : "▼";
     ctx.save();
     ctx.textAlign = "center";
@@ -355,7 +354,7 @@ function drawShopSigns(
       const levels = i >= 11 ? 3 : 2;
       const lift = ((i >= 11 ? i - 11 : i) % levels) * 22;
       ctx.font = '700 8px "IBM Plex Mono", monospace';
-      const w = Math.max(ctx.measureText(coin).width, ctx.measureText(price).width) + 6;
+      const w = Math.max(ctx.measureText(fund).width, ctx.measureText(price).width) + 6;
       const h = 20;
       const y = scr.y - h / 2 - 2 - lift;
       roundRect(ctx, scr.x - w / 2, y - h / 2, w, h, 4);
@@ -364,13 +363,13 @@ function drawShopSigns(
       ctx.fill();
       ctx.globalAlpha = 1;
       ctx.fillStyle = "#f4e8c8";
-      ctx.fillText(coin, scr.x, y - 4);
-      ctx.fillStyle = tape.dark ? "#f4e8c8" : chg >= 0 ? "#c9ecb4" : "#ffc2b8";
+      ctx.fillText(fund, scr.x, y - 4);
+      ctx.fillStyle = dark ? "#f4e8c8" : chg >= 0 ? "#c9ecb4" : "#ffc2b8";
       ctx.fillText(price, scr.x, y + 5);
     } else {
-      const line2 = tape.dark ? price : `${price} ${arrow}${Math.abs(chg).toFixed(1)}%`;
+      const line2 = dark ? price : `${price} ${arrow}${Math.abs(chg).toFixed(1)}%`;
       ctx.font = '700 10px "IBM Plex Mono", monospace';
-      const w = Math.max(ctx.measureText(line2).width, ctx.measureText(coin).width) + 12;
+      const w = Math.max(ctx.measureText(line2).width, ctx.measureText(fund).width) + 12;
       const h = 28;
       // The bottom yards pack stalls closer: alternate their signs' heights.
       const lift = i >= 11 && (i - 11) % 2 === 1 ? 32 : 0;
@@ -385,9 +384,9 @@ function drawShopSigns(
       ctx.stroke();
       ctx.fillStyle = "#f4e8c8";
       ctx.font = '700 10px "Cinzel", "Times New Roman", serif';
-      ctx.fillText(coin, scr.x, y - 6);
+      ctx.fillText(fund, scr.x, y - 6);
       ctx.font = '600 9.5px "IBM Plex Mono", monospace';
-      ctx.fillStyle = tape.dark ? "#f4e8c8" : chg >= 0 ? "#c9ecb4" : "#ffc2b8";
+      ctx.fillStyle = dark ? "#f4e8c8" : chg >= 0 ? "#c9ecb4" : "#ffc2b8";
       ctx.fillText(line2, scr.x, y + 7);
     }
     ctx.restore();
@@ -400,7 +399,7 @@ function drawOverlays(
     king: King;
     subjects: Subject[];
     selectedId: string | null;
-    tape: Tape;
+    board?: Board;
     speech: SpeechLine[];
   },
   scale: number,
@@ -416,7 +415,7 @@ function drawOverlays(
     kingScr.x,
     kingHead,
     "His Majesty",
-    formatPurse(opts.king.balance, opts.tape),
+    money(opts.king.balance),
     opts.selectedId === "king",
   );
   tops.set("king", kingTop);
@@ -430,7 +429,7 @@ function drawOverlays(
       scr.x,
       head,
       sub.firstName,
-      formatPurse(sub.balance, opts.tape),
+      money(sub.worth ?? sub.balance),
       opts.selectedId === sub.id,
     );
     tops.set(sub.id, top);
@@ -478,9 +477,8 @@ export function drawTown(
     king: King;
     subjects: Subject[];
     selectedId: string | null;
-    tape: Tape;
-    /** Fresher prices for the shop signs (polled every minute); the stalls follow `tape.coins`. */
-    liveTape?: Tape | null;
+    /** The funds at the latest close, for the stall signs (one stall per fund). */
+    board?: Board;
     speech: SpeechLine[];
     cam?: Cam;
     viewW: number;
@@ -510,11 +508,10 @@ export function drawTown(
       draw: () => drawProp(ctx, img, p),
     });
   }
-  stallCoins(opts.tape, opts.liveTape)
-    .slice(0, SHOP_SLOTS.length)
-    .forEach((coin, i) => {
+  FUND_IDS.slice(0, SHOP_SLOTS.length)
+    .forEach((fund, i) => {
       const slot = SHOP_SLOTS[i]!;
-      drawables.push({ y: slot.y, draw: () => drawStall(ctx, slot.x, slot.y, AWNINGS[i] ?? "#6b4226", coin) });
+      drawables.push({ y: slot.y, draw: () => drawStall(ctx, slot.x, slot.y, AWNINGS[i] ?? "#6b4226", fund) });
     });
   drawables.push({
     y: opts.king.y,
@@ -551,7 +548,7 @@ export function drawTown(
     ctx.fillRect(0, 0, viewW, viewH);
   }
 
-  drawShopSigns(ctx, scale, ox, oy, opts.tape, opts.liveTape ?? null);
+  drawShopSigns(ctx, scale, ox, oy, opts.board);
   drawOverlays(ctx, opts, scale, ox, oy);
 
   return { scale, ox, oy };

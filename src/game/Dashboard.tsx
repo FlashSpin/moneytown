@@ -1,68 +1,54 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  AlertTriangle,
-  BookOpenCheck,
-  CheckCircle2,
-  ChevronRight,
-  ClipboardCheck,
-  FlaskConical,
-  Coins,
-  Crown,
-  Landmark,
-  LineChart,
-  OctagonX,
-  Users,
-  X,
-} from "lucide-react";
+import { AlertTriangle, BookOpenCheck, CheckCircle2, ChevronRight, Crown, Landmark, OctagonX, PiggyBank, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { formatCoinPrice } from "@/lib/market";
+import { formatFundPrice } from "@/lib/market";
 import { LIVING_CAP } from "./constants";
-import { priceOf } from "./dawn";
+import { performance, strategyLabel, type FundTrade } from "./guild";
+import { FUNDS, type FundId } from "./merchant";
 import { parishWealth } from "./progress";
 import { useGame } from "./store";
-import { STRATEGY_INFO, unrealized, type TradeEvent } from "./strategies";
 import { Exposure, Money } from "./TradingViews";
-import { ago, useBestTape } from "./view-helpers";
-import type { LogEntry, Subject, Tape } from "./types";
-import { formatPurse } from "./wallets";
+import { ago } from "./view-helpers";
+import type { LogEntry, Subject } from "./types";
+import { money } from "./wallets";
 
 const living = (s: Subject) => s.state !== "condemned" && s.state !== "hanging";
-/** A trade check older than this means the schedule has stopped. */
-const STALE_TICK_MS = 20 * 60_000;
+/** No close for this long (a long weekend plus a missed run) means the market-day schedule has stopped. */
+const STALE_MARKET_MS = 4 * 24 * 3_600_000;
+const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 
 // ── Overview ────────────────────────────────────────────────────────────────
 
-/** The headline numbers: the parish's wealth, the treasury, the souls, and what's in the market. */
+/** The headline numbers: the guild's wealth, the treasury, the merchants, and how much is invested. */
 export function KpiTiles() {
   const king = useGame((s) => s.king);
   const subjects = useGame((s) => s.subjects);
-  const tape = useBestTape();
   const alive = subjects.filter(living);
-  const wealth = parishWealth({ king, subjects }, (c) => priceOf(tape, c));
-  const banked = alive.reduce((n, s) => n + (s.balance - (s.dayStart ?? s.balance)), 0);
-  const open = alive.filter((s) => s.position);
-  const openPnl = open.reduce((n, s) => n + unrealized(s.position!, priceOf(tape, s.position!.coin)), 0);
-  const staked = open.reduce((n, s) => n + s.position!.stake, 0);
+  const wealth = parishWealth({ king, subjects });
+  const worth = alive.reduce((n, s) => n + (s.worth ?? s.balance), 0);
+  const cash = alive.reduce((n, s) => n + s.balance, 0);
+  const staked = alive.reduce((n, s) => n + (s.track?.start ?? 0), 0);
+  const invested = worth - cash;
   return (
     <dl className="kpis">
       <div className="kpi kpi-wide">
         <dt>
-          <Landmark size={14} aria-hidden /> Parish wealth
+          <Landmark size={14} aria-hidden /> Guild wealth
         </dt>
-        <dd className="kpi-num">{formatPurse(wealth, tape)}</dd>
+        <dd className="kpi-num">{money(wealth)}</dd>
         <dd className="kpi-sub">
-          Today <Money sats={banked} tape={tape} /> banked, <Money sats={openPnl} tape={tape} /> open
+          The merchants&apos; ISAs {money(worth)}: <Money pence={worth - staked} /> on their stakes
         </dd>
       </div>
       <div className="kpi">
         <dt>
           <Crown size={14} aria-hidden /> Treasury
         </dt>
-        <dd className="kpi-num">{formatPurse(king.balance, tape)}</dd>
+        <dd className="kpi-num">{money(king.balance)}</dd>
       </div>
       <div className="kpi">
         <dt>
-          <Users size={14} aria-hidden /> Souls
+          <Users size={14} aria-hidden /> Merchants
         </dt>
         <dd className="kpi-num">
           {alive.length}
@@ -71,12 +57,12 @@ export function KpiTiles() {
       </div>
       <div className="kpi kpi-wide">
         <dt>
-          <Coins size={14} aria-hidden /> In the market
+          <PiggyBank size={14} aria-hidden /> Invested
         </dt>
-        <dd className="kpi-num">
-          {open.length} {open.length === 1 ? "trade" : "trades"}
+        <dd className="kpi-num">{worth > 0 ? `${Math.round((invested / worth) * 100)}%` : "—"}</dd>
+        <dd className="kpi-sub">
+          {money(invested)} in funds, {money(cash)} in cash
         </dd>
-        <dd className="kpi-sub">{open.length ? `${formatPurse(staked, tape)} staked` : "Everyone is in cash"}</dd>
       </div>
     </dl>
   );
@@ -100,62 +86,60 @@ function StatusRow({ health, label, children }: { health: Health; label: string;
   );
 }
 
-/** Is the simulation running, and can its numbers be trusted? */
+/** Is the guild running, and can its numbers be trusted? */
 export function StatusCard() {
-  const lastTickAt = useGame((s) => s.lastTickAt);
+  const lastMarketAt = useGame((s) => s.lastMarketAt);
   const halt = useGame((s) => s.halt);
-  const risk = useGame((s) => s.risk);
-  const desk = useGame((s) => s.desk);
   const books = useGame((s) => s.ledger);
-  const feed = useGame((s) => s.feed);
-  const tape = useBestTape();
-  const blocked = Object.entries(risk?.blocked ?? {});
-  const stale = !lastTickAt || Date.now() - lastTickAt > STALE_TICK_MS;
+  const board = useGame((s) => s.board);
+  const bench = useGame((s) => s.bench);
+  const stale = !lastMarketAt || Date.now() - lastMarketAt > STALE_MARKET_MS;
+  const funds = board ? (Object.entries(board.funds) as [FundId, NonNullable<(typeof board.funds)[FundId]>][]) : [];
 
   return (
     <section className="card" aria-labelledby="status-title">
       <h2 id="status-title" className="card-title">
-        Simulation status
+        Guild status
       </h2>
       <dl className="status">
-        <StatusRow health={halt ? "bad" : risk?.pausedToday || stale ? "warn" : "good"} label="Trading">
+        <StatusRow health={halt ? "bad" : stale ? "warn" : "good"} label="Orders">
           {halt
-            ? `Halted — ${halt.reason}. Open trades are still managed.`
-            : risk?.pausedToday
-              ? `Paused until dawn — ${risk.pausedToday.reason}.`
-              : lastTickAt
-                ? `Last check ${ago(lastTickAt)}${stale ? " — the 5-minute schedule seems to have stopped" : ""}.`
-                : "Waiting for the first trading check."}
+            ? `Halted — ${halt.reason}. Purses are still valued at every close.`
+            : lastMarketAt
+              ? `Last market day ${ago(lastMarketAt)}${stale ? " — the closing-price schedule seems to have stopped" : ""}.`
+              : "Waiting for the first closing prices."}
         </StatusRow>
-        <StatusRow health={tape.dark ? "bad" : feed && feed.stale.length > feed.listed / 2 ? "warn" : "good"} label="Market data">
-          {tape.dark
-            ? "Prices unavailable — no one trades until they return."
-            : feed
-              ? `${feed.priced}/${feed.listed} coins priced, ${feed.withBook} with a live order book (${tape.source})${
-                  feed.held.length ? `; held back: ${feed.held.join(", ")}` : ""
-                }.`
-              : `Prices from ${tape.source}.`}
+        <StatusRow health={board ? "good" : "warn"} label="Market board">
+          {board
+            ? `The close of ${board.d}: ${funds.length} funds priced (Yahoo daily closes, dividends included).`
+            : "No closing prices yet — they arrive after each US market close."}
         </StatusRow>
         <StatusRow health={!books?.check ? "warn" : books.check.ok ? "good" : "bad"} label="Books">
           {!books?.check
-            ? "The ledger check runs with the next trading tick."
+            ? "The ledger check runs with the next market day."
             : books.check.ok
               ? `Balanced — every purse matches the ledger (${ago(books.check.checkedAt)}).`
-              : `Out of balance on ${books.check.diffs.length} accounts — trading halted.`}{" "}
+              : `Out of balance on ${books.check.diffs.length} accounts — orders halted.`}{" "}
           <a href="/api/ledger" target="_blank" rel="noreferrer">
             Audit
           </a>
         </StatusRow>
-        <StatusRow health={desk?.error || desk?.probation ? "warn" : "good"} label="Trading desk">
-          {desk
-            ? `${desk.brain ? desk.brain.label : "No AI answered"}${desk.orders ? `, ${desk.orders} own calls` : ""}; ${
-                desk.nextAt > Date.now() ? `next look in ${Math.max(1, Math.round((desk.nextAt - Date.now()) / 60_000))} min` : "looking again soon"
-              }.${desk.probation ? ` On probation: ${desk.probation}, so it looks only every two hours and needs a much clearer edge.` : ""}`
-            : "Not asked yet."}
-        </StatusRow>
       </dl>
-      {blocked.length ? (
-        <p className="card-note">Stopped at the last check: {blocked.map(([why, n]) => `${n} × ${why}`).join(", ")}.</p>
+      {bench ? (
+        <p className="card-note">
+          Since the guild began, a 60/40 of shares and bonds has made {pct(bench.sf / 100 - 1)} and US shares {pct(bench.us / 100 - 1)} — the
+          bars every merchant is judged against.
+        </p>
+      ) : null}
+      {funds.length ? (
+        <ul className="board-list">
+          {funds.map(([f, q]) => (
+            <li key={f} title={FUNDS[f].name}>
+              <strong>{f}</strong> {formatFundPrice(q.close)}{" "}
+              <span className={q.change1d >= 0 ? "tape-up" : "tape-down"}>{pct(q.change1d)}</span>
+            </li>
+          ))}
+        </ul>
       ) : null}
       <p className="card-note">
         <a href="/api/health?soft=1" target="_blank" rel="noreferrer">
@@ -163,21 +147,15 @@ export function StatusCard() {
         </a>{" "}
         — job runs, failures and timings over the last day.
       </p>
-      {tape.trending?.length ? (
-        <p className="card-note">
-          Crowd is watching {tape.trending.slice(0, 6).join(", ")} · fear &amp; greed {tape.fearGreed} ({tape.fearGreedLabel}).
-        </p>
-      ) : null}
     </section>
   );
 }
 
-/** What the last dawn did to the parish's money. */
+/** What the last dawn did to the treasury. */
 export function DawnReport() {
   const book = useGame((s) => s.lastDawn);
-  const tape = useBestTape();
   if (!book) return null;
-  const net = book.tax + book.upkeep + book.gallows - book.stakes;
+  const net = book.dues + book.gallows - book.stakes;
   return (
     <section className="card" aria-labelledby="dawn-title">
       <h2 id="dawn-title" className="card-title">
@@ -185,27 +163,21 @@ export function DawnReport() {
       </h2>
       <dl className="dawn-grid">
         <div>
-          <dt>Parish banked</dt>
-          <dd>
-            <Money sats={book.banked} tape={tape} />
-          </dd>
+          <dt>Dues</dt>
+          <dd>{book.dues ? money(book.dues) : "—"}</dd>
         </div>
         <div>
-          <dt>Tax</dt>
-          <dd>{formatPurse(book.tax, tape)}</dd>
-        </div>
-        <div>
-          <dt>Upkeep</dt>
-          <dd>{formatPurse(book.upkeep, tape)}</dd>
+          <dt>From the gallows</dt>
+          <dd>{book.gallows ? money(book.gallows) : "—"}</dd>
         </div>
         <div>
           <dt>New stakes</dt>
-          <dd>{book.stakes ? `-${formatPurse(book.stakes, tape)}` : "—"}</dd>
+          <dd>{book.stakes ? `-${money(book.stakes)}` : "—"}</dd>
         </div>
         <div>
           <dt>Treasury net</dt>
           <dd>
-            <Money sats={net} tape={tape} />
+            <Money pence={net} />
           </dd>
         </div>
       </dl>
@@ -217,25 +189,26 @@ export function DawnReport() {
 export function LatestTrades() {
   const trades = useGame((s) => s.trades);
   const setTab = useGame((s) => s.setTab);
-  const tape = useBestTape();
   return (
     <section className="card" aria-labelledby="latest-title">
       <div className="card-head">
         <h2 id="latest-title" className="card-title">
-          Latest trades
+          Latest orders
         </h2>
         <button type="button" className="link-btn" onClick={() => setTab("trading")}>
-          All trades <ChevronRight size={14} aria-hidden />
+          All orders <ChevronRight size={14} aria-hidden />
         </button>
       </div>
       {trades?.length ? (
         <ul className="trade-list">
           {trades.slice(0, 5).map((t, i) => (
-            <TradeRow key={`${t.t}-${t.id}-${i}`} t={t} tape={tape} />
+            <TradeRow key={`${t.t}-${t.id}-${t.fund}-${i}`} t={t} />
           ))}
         </ul>
       ) : (
-        <EmptyNote>No trades yet. Each villager&apos;s strategy checks every coin every 5 minutes and trades when its signal fires.</EmptyNote>
+        <EmptyNote>
+          No orders yet. After each close every merchant&apos;s strategy sets its target mix of funds; the orders fill at the next close.
+        </EmptyNote>
       )}
     </section>
   );
@@ -251,19 +224,10 @@ export function KeyActions() {
         <Crown size={16} aria-hidden /> Ask the King
       </button>
       <button type="button" className="btn" onClick={() => setTab("parish")}>
-        <Users size={16} aria-hidden /> Meet the villagers
+        <Users size={16} aria-hidden /> Meet the merchants
       </button>
-      <a className="btn" href="/backtest">
-        <LineChart size={16} aria-hidden /> Backtests
-      </a>
-      <a className="btn" href="/paper">
-        <ClipboardCheck size={16} aria-hidden /> Paper trading
-      </a>
-      <a className="btn" href="/lab">
-        <FlaskConical size={16} aria-hidden /> Strategy lab
-      </a>
       <a className="btn" href="/isa">
-        <Landmark size={16} aria-hidden /> Merchant guild ISA
+        <Landmark size={16} aria-hidden /> Guild lab &amp; model ISA
       </a>
       <button type="button" className="btn" onClick={() => setGuide(true)}>
         <BookOpenCheck size={16} aria-hidden /> How it works
@@ -276,43 +240,50 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
   return <p className="empty-note">{children}</p>;
 }
 
-// ── Trading ─────────────────────────────────────────────────────────────────
+// ── Investing ───────────────────────────────────────────────────────────────
 
-/** Every open trade, with its live profit or loss. */
+/** Every merchant's ISA: its worth, how it stands against the 60/40, and its biggest holdings. */
 export function PositionsList() {
   const subjects = useGame((s) => s.subjects);
   const select = useGame((s) => s.select);
-  const tape = useBestTape();
-  const open = subjects.filter((s) => living(s) && s.position);
+  const board = useGame((s) => s.board);
+  const bench = useGame((s) => s.bench?.sf ?? 100);
+  const alive = subjects.filter(living).sort((a, b) => (b.worth ?? b.balance) - (a.worth ?? a.balance));
   return (
     <section className="card" aria-labelledby="positions-title">
       <h2 id="positions-title" className="card-title">
-        Open trades · {open.length}
+        The merchants&apos; ISAs · {alive.length}
       </h2>
-      {open.length ? (
+      {alive.length ? (
         <ul className="pos-list">
-          {open.map((s) => {
-            const p = s.position!;
-            const px = priceOf(tape, p.coin);
-            const pnl = unrealized(p, px);
-            const movePct = p.entryUsd > 0 ? ((px - p.entryUsd) / p.entryUsd) * 100 * (p.side === "long" ? 1 : -1) : 0;
+          {alive.map((s) => {
+            const worth = s.worth ?? s.balance;
+            const p = performance(s, bench);
+            const top = (Object.entries(s.holdings ?? {}) as [FundId, number][])
+              .map(([f, u]) => ({ f, value: u * (board?.funds[f]?.close ?? 0) }))
+              .filter((x) => x.value > 0)
+              .sort((a, b) => b.value - a.value)
+              .slice(0, 3);
+            const days = s.track?.days ?? 0;
             return (
               <li key={s.id}>
-                <button type="button" className="pos-row" onClick={() => select(s.id)} aria-label={`${s.firstName}: ${p.side} ${p.coin}, open ${ago(p.openedAt)}`}>
+                <button type="button" className="pos-row" onClick={() => select(s.id)} aria-label={`${s.firstName}: ISA worth ${money(worth)}`}>
                   <span className="pos-who">
-                    <strong>{s.firstName}</strong>
-                    <span className={`side side-${p.side}`}>{p.side === "long" ? "Long" : "Short"}</span> {p.coin}
+                    <strong>{s.firstName}</strong> {strategyLabel(s.strategy)}
                   </span>
                   <span className="pos-pnl">
-                    <Money sats={pnl} tape={tape} />
-                    <span className="pos-pct">
-                      {movePct >= 0 ? "+" : ""}
-                      {movePct.toFixed(2)}%
-                    </span>
+                    {money(worth)}
+                    {p && days ? (
+                      <span className={`pos-pct ${p.ahead >= 0 ? "tape-up" : "tape-down"}`}>
+                        {pct(p.ret)} vs {pct(p.bench)}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="pos-meta">
-                    {formatCoinPrice(p.entryUsd)} → {formatCoinPrice(px)} · {formatPurse(p.stake, tape)} staked · {ago(p.openedAt)}
-                    {p.own ? " · own call" : p.by ? ` · ${STRATEGY_INFO[p.by as keyof typeof STRATEGY_INFO]?.label ?? p.by}` : ""}
+                    {top.length
+                      ? top.map(({ f, value }) => `${f} ${worth > 0 ? Math.round((value / worth) * 100) : 0}%`).join(" · ")
+                      : "All in cash"}
+                    {days ? ` · ${days} market ${days === 1 ? "day" : "days"}` : " · not yet invested"}
                   </span>
                 </button>
               </li>
@@ -320,54 +291,33 @@ export function PositionsList() {
           })}
         </ul>
       ) : (
-        <EmptyNote>Nobody is in a trade right now.</EmptyNote>
+        <EmptyNote>No merchants on the roll.</EmptyNote>
       )}
-      <RestingOrders subjects={subjects.filter((s) => living(s) && !s.position && s.pending)} />
-      <Exposure subjects={subjects} tape={tape} />
+      <Exposure subjects={subjects} />
     </section>
   );
 }
 
-/** Limit orders resting on the book, waiting for the price to come to them. */
-function RestingOrders({ subjects }: { subjects: Subject[] }) {
-  if (!subjects.length) return null;
-  return (
-    <p className="card-note">
-      Waiting to fill (limit orders, cheaper than buying at market):{" "}
-      {subjects
-        .map((s) => `${s.firstName} to ${s.pending!.side === "long" ? "buy" : "short"} ${s.pending!.coin} at ${formatCoinPrice(s.pending!.limit)}`)
-        .join("; ")}
-      .
-    </p>
-  );
-}
-
-type Kind = "all" | "open" | "close" | "own";
-
-/** Every recent fill, filterable, each with how it was filled and why. */
+/** Every recent fill, filterable, each with its cost and why it was placed. */
 export function TradeHistory() {
   const stored = useGame((s) => s.trades);
   const trades = useMemo(() => stored ?? [], [stored]);
-  const tape = useBestTape();
   const [who, setWho] = useState("all");
-  const [kind, setKind] = useState<Kind>("all");
-  const [coin, setCoin] = useState("all");
+  const [side, setSide] = useState<"all" | "buy" | "sell">("all");
+  const [fund, setFund] = useState("all");
   const names = useMemo(() => [...new Set(trades.map((t) => t.name))].sort(), [trades]);
-  const coins = useMemo(() => [...new Set(trades.map((t) => t.coin))].sort(), [trades]);
+  const funds = useMemo(() => [...new Set(trades.map((t) => t.fund))].sort(), [trades]);
   const shown = trades.filter(
-    (t) =>
-      (who === "all" || t.name === who) &&
-      (coin === "all" || t.coin === coin) &&
-      (kind === "all" || (kind === "own" ? t.own : t.action === kind)),
+    (t) => (who === "all" || t.name === who) && (fund === "all" || t.fund === fund) && (side === "all" || (side === "buy") === t.value >= 0),
   );
   return (
     <section className="card" aria-labelledby="history-title">
       <h2 id="history-title" className="card-title">
-        Trade history
+        Order history
       </h2>
-      <div className="filters" role="group" aria-label="Filter trades">
+      <div className="filters" role="group" aria-label="Filter orders">
         <label>
-          <span>Villager</span>
+          <span>Merchant</span>
           <select value={who} onChange={(e) => setWho(e.target.value)}>
             <option value="all">Everyone</option>
             {names.map((n) => (
@@ -376,20 +326,19 @@ export function TradeHistory() {
           </select>
         </label>
         <label>
-          <span>Kind</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-            <option value="all">All fills</option>
-            <option value="open">Opens</option>
-            <option value="close">Closes</option>
-            <option value="own">Own calls</option>
+          <span>Side</span>
+          <select value={side} onChange={(e) => setSide(e.target.value as typeof side)}>
+            <option value="all">Both</option>
+            <option value="buy">Buys</option>
+            <option value="sell">Sells</option>
           </select>
         </label>
         <label>
-          <span>Coin</span>
-          <select value={coin} onChange={(e) => setCoin(e.target.value)}>
-            <option value="all">Every coin</option>
-            {coins.map((c) => (
-              <option key={c}>{c}</option>
+          <span>Fund</span>
+          <select value={fund} onChange={(e) => setFund(e.target.value)}>
+            <option value="all">Every fund</option>
+            {funds.map((f) => (
+              <option key={f}>{f}</option>
             ))}
           </select>
         </label>
@@ -400,27 +349,25 @@ export function TradeHistory() {
       {shown.length ? (
         <ul className="trade-list">
           {shown.map((t, i) => (
-            <TradeRow key={`${t.t}-${t.id}-${i}`} t={t} tape={tape} details />
+            <TradeRow key={`${t.t}-${t.id}-${t.fund}-${i}`} t={t} details />
           ))}
         </ul>
       ) : (
-        <EmptyNote>{trades.length ? "No fills match these filters." : "No trades yet."}</EmptyNote>
+        <EmptyNote>{trades.length ? "No fills match these filters." : "No orders yet."}</EmptyNote>
       )}
     </section>
   );
 }
 
-function TradeRow({ t, tape, details = false }: { t: TradeEvent; tape: Tape; details?: boolean }) {
-  const verb = t.action === "open" ? (t.side === "long" ? "Bought" : "Shorted") : "Closed";
-  const time = new Date(t.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function TradeRow({ t, details = false }: { t: FundTrade; details?: boolean }) {
+  const bought = t.value >= 0;
   const head = (
     <>
-      <span className="trade-time">{time}</span>
+      <span className="trade-time">{t.d || new Date(t.t).toLocaleDateString([], { day: "numeric", month: "short" })}</span>
       <span className="trade-what">
-        <strong>{t.name}</strong> {verb.toLowerCase()} {t.coin} at {formatCoinPrice(t.price)}
-        {t.own ? <span className="tag">own call</span> : null}
+        <strong>{t.name}</strong> {bought ? "bought" : "sold"} {money(Math.abs(t.value))} of {t.fund}
       </span>
-      <span className="trade-pnl">{t.action === "close" && t.pnl !== undefined ? <Money sats={t.pnl} tape={tape} /> : null}</span>
+      <span className="trade-pnl bt-muted">{money(t.cost)} cost</span>
     </>
   );
   if (!details) return <li className="trade-row">{head}</li>;
@@ -431,38 +378,22 @@ function TradeRow({ t, tape, details = false }: { t: TradeEvent; tape: Tape; det
         <dl className="fill">
           <div>
             <dt>Why</dt>
-            <dd>{t.reason}</dd>
+            <dd>{t.why}</dd>
           </div>
-          {t.mid ? (
-            <div>
-              <dt>Filled</dt>
-              <dd>
-                {formatCoinPrice(t.price)} against a mid of {formatCoinPrice(t.mid)}
-                {t.qty ? ` · ${t.qty} ${t.coin}` : ""}
-              </dd>
-            </div>
-          ) : null}
           <div>
-            <dt>Costs</dt>
+            <dt>Fund</dt>
             <dd>
-              fee {formatPurse(t.fee ?? 0, tape)}
-              {t.cost !== undefined ? `, spread & slippage ${formatPurse(t.cost, tape)}` : ""}
+              {FUNDS[t.fund].name} — in a real ISA, {FUNDS[t.fund].isa}
             </dd>
           </div>
-          {t.action === "open" && t.risk ? (
-            <div>
-              <dt>At risk</dt>
-              <dd>{(t.risk * 100).toFixed(1)}% of the purse if the stop is hit</dd>
-            </div>
-          ) : null}
-          {t.action === "close" && t.pnl !== undefined ? (
-            <div>
-              <dt>Result</dt>
-              <dd>
-                <Money sats={t.pnl} tape={tape} /> after every cost
-              </dd>
-            </div>
-          ) : null}
+          <div>
+            <dt>Filled</dt>
+            <dd>At the close of {t.d}, after it was decided at the close before.</dd>
+          </div>
+          <div>
+            <dt>Costs</dt>
+            <dd>{money(t.cost)} (spread and currency fee)</dd>
+          </div>
         </dl>
       </details>
     </li>
@@ -474,7 +405,7 @@ function TradeRow({ t, tape, details = false }: { t: TradeEvent; tape: Tape; det
 const KINDS: { id: LogEntry["kind"] | "all"; label: string }[] = [
   { id: "all", label: "Everything" },
   { id: "crown", label: "The crown" },
-  { id: "subject", label: "Villagers" },
+  { id: "subject", label: "Merchants" },
   { id: "tape", label: "Markets" },
   { id: "death", label: "Gallows" },
   { id: "system", label: "Reports" },
@@ -515,20 +446,19 @@ export function ChronicleList() {
   );
 }
 
+
 // ── The guide: onboarding and glossary ──────────────────────────────────────
 
 const GLOSSARY: [string, string][] = [
-  ["Long", "a bet that the price rises: buy now, sell later."],
-  ["Short", "a bet that the price falls: sell now, buy back later."],
-  ["Take-profit", "the gain (in %) at which a trade is closed to bank the profit."],
-  ["Stop-loss", "the loss (in %) at which a trade is closed to stop it losing more."],
-  ["Spread", "the gap between the best price to buy (ask) and to sell (bid); every trade crosses it."],
-  ["Slippage", "how much worse than the quoted price a trade fills — bigger orders slip more."],
-  ["Fee", "what the exchange charges on every fill (0.4% here)."],
-  ["Kelly sizing", "a formula that stakes more when a trader's record shows a real edge, and less when it doesn't."],
-  ["Edge", "how much better than break-even a trade's chance of winning is, after costs."],
+  ["ISA", "an Individual Savings Account: in the UK, gains and dividends inside a stocks & shares ISA are free of tax."],
+  ["Index fund", "one fund that owns a whole market (say the 500 biggest US companies), so one purchase spreads the money widely."],
+  ["60/40", "60% in shares, 40% in bonds — the plain, sleepy mix every merchant is judged against."],
+  ["Rebalance", "selling what has grown too big and buying what has shrunk, to get back to the target mix."],
+  ["200-day average", "the average close over roughly the last ten months; a trend strategy holds a fund only while it is above it."],
+  ["Momentum", "holding what has risen most over recent months, on the evidence that winners tend to keep winning for a while."],
   ["Drawdown", "the fall from a high point to a low point — the worst stretch."],
-  ["Paper trading", "trading real prices with pretend money. Nothing here is real money."],
+  ["Dues", "the share of each merchant's season gain paid to the treasury (the guild's only tax; ISAs pay none)."],
+  ["Paper trading", "investing at real closing prices with pretend money. Nothing here is real money."],
 ];
 
 /** Opens once for a first-time visitor, and any time from the help button. */
@@ -548,26 +478,26 @@ export function Guide() {
             </Dialog.Close>
           </div>
           <p id="guide-lede" className="guide-lede">
-            A medieval market town whose villagers are AI trading bots. They trade real crypto prices from the Kraken exchange with pretend
-            money — nothing here is real money, and nothing is guaranteed to make a profit.
+            A medieval market town whose villagers are AI merchants, each running a stocks &amp; shares ISA of index funds at real closing
+            prices with pretend money — nothing here is real money, and nothing is guaranteed to make a profit.
           </p>
           <ol className="guide-steps">
             <li>
-              <strong>The goal.</strong> Each 7-day season the parish must grow its total wealth by a target. Villagers who lose too much end
-              up on the gallows.
+              <strong>The goal.</strong> Each 28-day season the guild must grow its wealth more than a plain 60/40 of shares and bonds would
+              have. A merchant whose ISA falls below half its stake goes to the gallows.
             </li>
             <li>
-              <strong>How they trade.</strong> Every 5 minutes each villager&apos;s strategy checks 50 coins and trades the strongest signal,
-              paying real-world fees and spreads. Every trade is sized to risk at most a few percent of its purse, and every penny is recorded
-              in a ledger anyone can audit.
+              <strong>How they invest.</strong> After each US market close, every merchant&apos;s strategy sets its target mix of ten funds
+              (shares, bonds, property, gold). The orders fill at the next close, paying realistic costs, and every penny is recorded in a
+              ledger anyone can audit.
             </li>
             <li>
-              <strong>Who decides.</strong> The King advises the villagers every few hours; they debate and choose their own strategies, learn
-              from every trade, and rise through the ranks as their records improve.
+              <strong>Who decides.</strong> Every week the King advises and the merchants choose their strategies from those tested over twenty
+              years of prices. A merchant far behind the 60/40 is retrained, and merchants rise through the ranks as their records improve.
             </li>
             <li>
-              <strong>What you can do.</strong> Ask the King anything, click any villager on the map to see their purse and trades, and watch
-              the trading floor.
+              <strong>What you can do.</strong> Ask the King anything, click any merchant on the map to see its ISA, and open the guild lab to
+              see how every strategy fared on years it never saw.
             </li>
           </ol>
           <details className="glossary">
@@ -590,7 +520,7 @@ export function Guide() {
                 setTab("king");
               }}
             >
-              <Crown size={16} aria-hidden /> Ask the King how the villagers fare
+              <Crown size={16} aria-hidden /> Ask the King how the merchants fare
             </button>
             <Dialog.Close className="btn">Look around first</Dialog.Close>
           </div>

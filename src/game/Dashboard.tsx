@@ -146,11 +146,11 @@ export function StatusCard() {
             Audit
           </a>
         </StatusRow>
-        <StatusRow health={desk?.error ? "warn" : "good"} label="Trading desk">
+        <StatusRow health={desk?.error || desk?.probation ? "warn" : "good"} label="Trading desk">
           {desk
             ? `${desk.brain ? desk.brain.label : "No AI answered"}${desk.orders ? `, ${desk.orders} own calls` : ""}; ${
                 desk.nextAt > Date.now() ? `next look in ${Math.max(1, Math.round((desk.nextAt - Date.now()) / 60_000))} min` : "looking again soon"
-              }.`
+              }.${desk.probation ? ` On probation: ${desk.probation}, so it looks only every two hours and needs a much clearer edge.` : ""}`
             : "Not asked yet."}
         </StatusRow>
       </dl>
@@ -319,8 +319,23 @@ export function PositionsList() {
       ) : (
         <EmptyNote>Nobody is in a trade right now.</EmptyNote>
       )}
+      <RestingOrders subjects={subjects.filter((s) => living(s) && !s.position && s.pending)} />
       <Exposure subjects={subjects} tape={tape} />
     </section>
+  );
+}
+
+/** Limit orders resting on the book, waiting for the price to come to them. */
+function RestingOrders({ subjects }: { subjects: Subject[] }) {
+  if (!subjects.length) return null;
+  return (
+    <p className="card-note">
+      Waiting to fill (limit orders, cheaper than buying at market):{" "}
+      {subjects
+        .map((s) => `${s.firstName} to ${s.pending!.side === "long" ? "buy" : "short"} ${s.pending!.coin} at ${formatCoinPrice(s.pending!.limit)}`)
+        .join("; ")}
+      .
+    </p>
   );
 }
 

@@ -332,7 +332,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
           at: now,
           // On probation the desk looks at most every two hours.
           nextAt: now + Math.max(desk?.nextMin ?? DESK_DEFAULT_GAP, onProbation.on ? 120 : 0) * 60_000,
-          ...(onProbation.on ? { probation: `own calls have lost ${onProbation.pnl} sats over ${onProbation.trades} trades` } : {}),
+          ...(onProbation.on ? { probation: `the villagers' own calls have lost money over ${onProbation.trades} trades` } : {}),
           say: desk?.say ?? "",
           orders: desk?.orders.size ?? 0,
           skipped,

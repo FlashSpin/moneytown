@@ -161,19 +161,45 @@ This is a paper-trading game. A real exchange connection would need its own revi
 `docs/real-money-kraken.md`: a key with trade-only permission (**never withdrawal**), an IP allow-list,
 kept only on the server, and separate from the game.
 
+## How the parish tries to win
+
+Every lab run showed the same thing: trading costs (about 0.95% a round trip at market) sink short-term
+strategies, and nearly every coin moves with Bitcoin. So:
+
+- **Slow bars.** Strategies trade hourly (or 4-hour) bars. A villager whose strategy still had 5-minute
+  defaults is moved onto hourly defaults automatically (`slowed`); a new kind starts there too. The AI may not
+  set a take-profit under 2% or a stop under 1%.
+- **Cheaper fills.** A take-profit rests on the book at its target: it fills there, at the maker fee (0.25%
+  instead of 0.40%), with no spread. With the `entry` gene a strategy also enters with a resting limit order at
+  the signal's price, filled only if the price trades through it and cancelled (free) after one bar. The
+  backtest treats a limit fill cautiously: only a trade *through* the price fills it, and if that bar also hit
+  the stop, the trade is stopped out.
+- **Bitcoin's trend.** With the `regime` gene (on by default), a strategy buys only while Bitcoin is above its
+  7-day average and shorts only below it. In a falling market, cash is a position.
+- **Rotation.** A strategy that holds the market's leader by return over a few days and moves on when it falls
+  out of the top few — the one pattern in crypto with a long record, and it trades rarely.
+- **The desk on probation.** When the villagers' own calls at the trading desk have lost money over 20+
+  trades, the desk looks only every two hours and a call needs a 15-point edge instead of 8.
+- **Spread, retrain, retire.** Newcomers are spread across the book's kinds (a crowded kind is picked less). At
+  dawn, a villager losing money over 10+ trades since its last training, or on a retired or fast-bar guild
+  strategy, is retrained in a book strategy. A book strategy losing clearly over 20 live trades is retired.
+
+None of this guarantees profit. The lab and the live paper record say whether it's working.
+
 ## The strategy lab
 
 `.github/workflows/strategy-lab.yml` runs `scripts/strategy-lab.ts` on GitHub's runners (they can reach the
-exchanges): it fetches 60 days of 5-minute and a year of hourly candles from Coinbase (Kraken if a coin isn't
-listed) for 20 coins, and breeds every strategy kind on 5-minute, 15-minute, hourly and 4-hour bars
-(`src/game/lab.ts`): random variants plus the guild book's current genomes, kept, mutated a little and crossed
-for up to 40 generations, within a 30-minute budget, on four cores. A genome is scored by the worse of the two
-halves of its training data, so it has to work in both.
+exchanges): it fetches three years of hourly candles from Coinbase (Kraken if a coin isn't listed) for 30
+coins, and breeds every strategy kind on hourly and 4-hour bars (`src/game/lab.ts`): random variants plus the
+guild book's current genomes, kept, mutated a little and crossed for up to 40 generations, within a 30-minute
+budget, on four cores. A genome is scored by the worse of the two halves of its training data, so it has to
+work in both. Genes include the bar size, windows, trigger, trend filter, trailing stop, hold, Bitcoin's trend
+(`regime`) and limit entries (`entry`) — the lab decides which help.
 
 - **Selection is out of sample.** Breeding sees the first 60% of the data; the next 20% picks each niche's
   champion; the last 20% is looked at once. *Proven* = money made on all three with enough trades, a profit
-  factor above 1, validation and test together clearly positive (t ≥ 1.5), and still with costs 50% higher. The job summary prints every niche's champion next to the
-  usual settings.
+  factor above 1, validation and test together clearly positive (t ≥ 1.5), and still with costs 50% higher.
+  The job summary prints every niche's champion next to the usual settings.
 - **The guild book** (`/lab`, `GET /api/lab`) keeps the best 40. New villagers (dawn and the King's summons) are
   trained in a slightly adjusted copy of a book genome, better-ranked ones more often (`summonAs` lets a
   petition ask for a kind or a genome). The councils see the book and may move a villager onto a genome by id;
@@ -182,7 +208,7 @@ halves of its training data, so it has to work in both.
   live trades a genome losing clearly is retired and never drawn again. The next lab run starts from the book.
 - **Longer bars live.** The ticks keep 10 days of hourly closes per coin (`ticks.h`); hourly and 4-hour
   strategies trade on finished bars only. Missing history is filled from Kraken's hourly candles, three coins a
-  tick, while anything needs it.
+  tick, Bitcoin first.
 - **Running it by hand:** Actions → Strategy lab → Run workflow (minutes, post = 1). Pushes to the lab's files
   on the working branch run it without posting, to try changes on real data.
 

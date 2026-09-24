@@ -323,7 +323,7 @@ const newId = (r: () => number, mode: string) => {
 
 export function fixM(m: MGenome): MGenome {
   const funds = [...new Set(m.funds)].filter((f) => FUND_IDS.includes(f)).sort();
-  return {
+  const out: MGenome = {
     ...m,
     funds: funds.length ? funds : ["SPY"],
     sma: Math.round(clamp(m.sma, 20, 250)),
@@ -333,6 +333,11 @@ export function fixM(m: MGenome): MGenome {
     safe: SAFE_FUNDS.includes(m.safe) ? m.safe : "SHY",
     every: EVERY.includes(m.every) ? m.every : 21,
   };
+  // Settings a mode doesn't use get one fixed value, so strategies that trade alike look alike.
+  if (out.mode !== "trend") out.sma = 200;
+  if (out.mode !== "momentum") Object.assign(out, { look: 126, top: 1, abs: 0 });
+  if (out.mode === "hold") out.safe = "SHY";
+  return out;
 }
 
 export function randomM(r: () => number): MGenome {
@@ -516,6 +521,8 @@ export type Isa = {
   trades: IsaTrade[];
   /** The benchmarks held from the start: units of each. */
   bench: { us: Weights; sf: Weights };
+  /** The latest close of each fund held (to value holdings). */
+  lastPx?: Weights;
 };
 
 const HISTORY_KEPT = 2000;
@@ -592,6 +599,7 @@ export function stepIsa(prev: Isa | undefined, g: Daily, i: number, satellite: M
   isa.history = [...isa.history, { d, v: Math.round(v * 100) / 100, us: Math.round(valueOf(isa.bench.us, 0, price) * 100) / 100, sf: Math.round(valueOf(isa.bench.sf, 0, price) * 100) / 100 }].slice(-HISTORY_KEPT);
   isa.trades = [...traded.reverse(), ...isa.trades].slice(0, TRADES_KEPT);
   isa.lastDay = d;
+  isa.lastPx = Object.fromEntries(Object.keys(isa.units).map((f) => [f, price(f as FundId)]));
 
   // Decide on the first day, then every CORE.every trading days (or sooner, the satellite's own schedule).
   const every = Math.min(CORE.every, sat?.every ?? CORE.every);

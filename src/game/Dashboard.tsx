@@ -262,6 +262,9 @@ export function KeyActions() {
       <a className="btn" href="/lab">
         <FlaskConical size={16} aria-hidden /> Strategy lab
       </a>
+      <a className="btn" href="/isa">
+        <Landmark size={16} aria-hidden /> Merchant guild ISA
+      </a>
       <button type="button" className="btn" onClick={() => setGuide(true)}>
         <BookOpenCheck size={16} aria-hidden /> How it works
       </button>

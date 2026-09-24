@@ -216,6 +216,21 @@ work in both. Genes include the bar size, windows, trigger, trend filter, traili
 - **Running it by hand:** Actions → Strategy lab → Run workflow (minutes, post = 1). Pushes to the lab's files
   on the working branch run it without posting, to try changes on real data.
 
+## The Merchant guild (paper ISA)
+
+`.github/workflows/merchant.yml` runs `scripts/merchant-lab.ts` after the US close on weekdays: it fetches every
+fund's full daily history (Yahoo, dividends included; Stooq as a fallback), breeds long-only fund strategies
+(`src/game/merchant.ts`: hold, trend, momentum; weekly to quarterly) and judges them on ~21 years: bred on the
+first 60%, the champion chosen on the next 20%, judged once on the last 20%, every trade paying 0.2%. *Proven*
+= money made on all three and a better Sharpe than 60/40 on both unseen slices.
+
+On the main branch it posts the last 400 days of prices and the verdict to `POST /api/merchant` (Bearer
+`CRON_SECRET`); the paper ISA (£10,000, 80% the core trend rule, 20% the guild's best proven strategy or the core
+rule) steps through every new trading day: decisions at a close, filled at the next. `/isa` and
+`GET /api/merchant` show it against holding US shares and a 60/40. Stored in `daily_prices`, `merchant_state`
+(one row) and `merchant_runs`. The lab tests US-listed proxies with long histories; a real ISA would hold the
+UK-listed (UCITS) funds named next to each.
+
 ## Paper trading and the gates before real money
 
 Every order the villagers send — filled or rejected by the (simulated) exchange — is stored in

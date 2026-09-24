@@ -161,6 +161,12 @@ function Runs({ book }: { book: LabBook }) {
             {latest.summary.data?.days5 ? `${latest.summary.data.days5} days of 5-minute and ` : ""}
             {latest.summary.data?.daysH ?? "?"} days of hourly candles); {latest.found} kept, {latest.proven} proven.
           </p>
+          {latest.summary.market && (
+            <p className="bt-note">
+              For comparison, over the same unseen test period holding Bitcoin returned {pct(latest.summary.market.btc)}, and holding every coin
+              equally {pct(latest.summary.market.basket)}.
+            </p>
+          )}
           {latest.summary.niches && latest.summary.niches.length > 0 && (
             <div className="bt-table-wrap">
               <table className="bt-table lab-table">

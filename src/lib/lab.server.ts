@@ -14,6 +14,8 @@ export type LabRunSummary = {
   seed?: number;
   minutes?: number;
   data?: { coins: string[]; sources?: Record<string, string>; days5?: number; daysH?: number; bars?: Record<string, number> };
+  /** What holding Bitcoin, and every coin equally, returned over the same unseen slice. */
+  market?: { testFrom?: number; btc: number | null; basket: number | null };
   niches?: { niche: string; evaluated: number; generations: number; curve: number[]; baseline: { train?: Score; val?: Score; test?: Score }; champion: string | null; proven: boolean }[];
 };
 
@@ -32,8 +34,11 @@ export function cleanRun(body: unknown): { summary: LabRunSummary; found: PoolEn
     .map((e) => ({ ...e, at }));
   const niches = Array.isArray(o.niches) ? (o.niches as LabRunSummary["niches"])!.slice(0, 64) : [];
   const data = o.data && typeof o.data === "object" ? (o.data as LabRunSummary["data"]) : undefined;
+  const m = (o.market && typeof o.market === "object" ? o.market : null) as Record<string, unknown> | null;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const market = m ? { testFrom: n(m.testFrom) ?? undefined, btc: n(m.btc), basket: n(m.basket) } : undefined;
   return {
-    summary: { at, ...(typeof o.seed === "number" ? { seed: o.seed } : {}), ...(typeof o.minutes === "number" ? { minutes: o.minutes } : {}), ...(data ? { data } : {}), niches },
+    summary: { at, ...(typeof o.seed === "number" ? { seed: o.seed } : {}), ...(typeof o.minutes === "number" ? { minutes: o.minutes } : {}), ...(data ? { data } : {}), ...(market ? { market } : {}), niches },
     found,
   };
 }

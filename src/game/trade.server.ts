@@ -12,7 +12,7 @@ import { loadTape } from "@/lib/tape.server";
 import { SHOUT_LIFE } from "./constants";
 import { marketCoins, priceOf, scanCoins } from "./dawn";
 import { appendHourly, appendTick, hoursOf, regimeOf, priceFresh, seedHourly, seriesForBar, tradingSeries, validatePrices, type Ticks } from "./indicators";
-import { recordLive } from "./lab";
+import { evidenceRiskCap, recordLive } from "./lab";
 import { haltReason, riskBook, type Gate } from "./limits";
 import { deskProbation, PROBATION_EDGE } from "./risk";
 import { standAt } from "./shops";
@@ -136,7 +136,8 @@ export function tradeParish(
       record: s.record,
       trades: s.trades,
       knowledge: lesson ? addLesson(s.knowledge, lesson) : s.knowledge,
-      riskCap: RANK_INFO[rankOf(s.record)].riskCap,
+      // Its rank caps its risk, and so does the evidence behind its strategy.
+      riskCap: Math.min(RANK_INFO[rankOf(s.record)].riskCap, evidenceRiskCap(strategy, state.lab?.pool ?? [])),
       regime,
       pending: s.pending,
       ...(probation ? { minEdge: PROBATION_EDGE } : {}),

@@ -591,6 +591,21 @@ export function needsRetraining(
   return null;
 }
 
+/** What a villager may risk per trade on a strategy without out-of-sample evidence (1% of the purse at its stop). */
+export const UNPROVEN_RISK = 0.01;
+
+/**
+ * Size by evidence: full Kelly sizing only for a strategy the guild has
+ * shown making money on data it never saw (proven, or in profit on both
+ * validation and test); anything else trades small, so a parish with no
+ * working strategy loses little while it learns.
+ */
+export function evidenceRiskCap(strategy: Pick<Strategy, "genome"> | undefined, book: PoolEntry[]): number {
+  const g = strategy?.genome;
+  const e = g ? book.find((x) => x.id === (g.book ?? g.id)) : undefined;
+  return e && !e.retired && (e.proven || (e.val.ret > 0 && e.test.ret > 0)) ? 1 : UNPROVEN_RISK;
+}
+
 /** How many living villagers trade each kind of strategy. */
 export function crowdOf(strategies: (Pick<Strategy, "kind"> | undefined)[]): Partial<Record<StrategyKind, number>> {
   const out: Partial<Record<StrategyKind, number>> = {};

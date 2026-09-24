@@ -14,8 +14,8 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
-import { candleGrid, coarsen, type Candle, type Grid } from "../src/game/backtest.ts";
-import { describe, evolveNiche, mergePool, NICHES, nicheKey, seedsFor, type Niche, type NicheResult, type PoolEntry, type Score } from "../src/game/lab.ts";
+import { candleGrid, coarsen, holdBaseline, type Candle, type Grid } from "../src/game/backtest.ts";
+import { describe, evolveNiche, mergePool, NICHES, nicheKey, seedsFor, slices, type Niche, type NicheResult, type PoolEntry, type Score } from "../src/game/lab.ts";
 import { BAR_LABEL, type Bar } from "../src/game/strategies.ts";
 
 const env = process.env;
@@ -204,6 +204,16 @@ async function main() {
   lines.push("");
   lines.push(`${results.reduce((n, r) => n + r.evaluated, 0)} strategies backtested across ${results.length} niches on ${Object.keys(h1).length} coins. **${proven.length} proven** (made money on train, validation and the untouched test data — the last two together clearly — and with 1.5× costs).`);
   lines.push("");
+  // What the market itself did over the same unseen slice: holding Bitcoin, and holding every coin equally.
+  const hg = g[12]!;
+  const test = slices(hg.t.length).test;
+  const hold = (coin: string) => holdBaseline(hg, coin, 1_000_000, test[0], test[1])?.metrics.totalReturn;
+  const btc = hold("BTC");
+  const each = Object.keys(hg.px).map(hold).filter((x): x is number => x !== undefined);
+  const basket = each.length ? each.reduce((a, b) => a + b, 0) / each.length : null;
+  const from = new Date(hg.t[test[0]]!).toISOString().slice(0, 10);
+  lines.push(`Over the unseen test (${from} → now), holding Bitcoin returned ${btc === undefined ? "—" : pct(btc)} and holding all ${each.length} coins equally ${basket === null ? "—" : pct(basket)}.`);
+  lines.push("");
   lines.push("| Niche | Champion | Train | Validation | Test | Usual settings, test | Proven |");
   lines.push("|---|---|---|---|---|---|---|");
   for (const r of results) {
@@ -219,6 +229,7 @@ async function main() {
     seed,
     minutes: Math.round((at - started) / 60_000),
     data: { coins: Object.keys(h1), sources, daysH, bars: Object.fromEntries(Object.entries(g).map(([k, v]) => [k, v.t.length])) },
+    market: { testFrom: hg.t[test[0]], btc: btc ?? null, basket },
     niches: results.map((r) => ({ niche: nicheKey(r.niche), evaluated: r.evaluated, generations: r.generations, curve: r.curve, baseline: r.baseline, champion: r.champion?.id ?? null, proven: !!r.champion?.proven })),
     found,
   };

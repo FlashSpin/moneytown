@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { candleGrid, type Candle } from "./backtest.ts";
-import { cleanEntry, defaultGenome, evolveNiche, fix, isProven, MAX_WARMUP, mergePool, mutate, pickForSpawn, randomGenome, needsRetraining, recordLive, rng, trainNewcomer, type PoolEntry, type Score } from "./lab.ts";
+import { cleanEntry, defaultGenome, evolveNiche, fix, isProven, MAX_WARMUP, mergePool, mutate, pickForSpawn, randomGenome, evidenceRiskCap, needsRetraining, recordLive, UNPROVEN_RISK, rng, trainNewcomer, type PoolEntry, type Score } from "./lab.ts";
 import { BARS, cleanStrategy, DEFAULT_GENES, STRATEGY_KINDS, warmupOf } from "./strategies.ts";
 
 /** Candles for `n` coins: a random walk, with `drift` adding trends that persist. */
@@ -171,5 +171,15 @@ describe("retraining", () => {
     let trend = 0;
     for (let k = 0; k < 200; k++) if (pickForSpawn(book, r, undefined, { breakout: 6 })?.kind === "trend") trend++;
     assert.ok(trend > 120, `with six breakout traders already, trend should be picked mostly (${trend}/200)`);
+  });
+});
+
+describe("sizing by evidence", () => {
+  it("risks fully only on a strategy shown to work on unseen data", () => {
+    const book = [entry({ id: "bre-y" }), entry({ id: "bre-n", proven: false, test: { ...good, ret: -0.05 } })];
+    const on = (id: string) => ({ genome: { id: `${id}-kid`, gen: 1, book: id } });
+    assert.equal(evidenceRiskCap(on("bre-y"), book), 1);
+    assert.equal(evidenceRiskCap(on("bre-n"), book), UNPROVEN_RISK);
+    assert.equal(evidenceRiskCap({}, book), UNPROVEN_RISK, "no guild strategy at all");
   });
 });

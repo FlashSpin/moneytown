@@ -184,6 +184,10 @@ strategies, and nearly every coin moves with Bitcoin. So:
   dawn, a villager losing money over 10+ trades since its last training, or on a retired or fast-bar guild
   strategy, is retrained in a book strategy. A book strategy losing clearly over 20 live trades is retired.
 
+- **Size by evidence.** Full Kelly sizing only for a villager on a guild strategy that made money on data it
+  never saw (proven, or in profit on validation and test). Anything else risks at most 1% of its purse per
+  trade, so a parish with no working strategy loses little while it learns.
+
 None of this guarantees profit. The lab and the live paper record say whether it's working.
 
 ## The strategy lab

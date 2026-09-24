@@ -27,10 +27,10 @@ export { FEE_RATE } from "./risk.ts";
 export const COOLDOWN_TICKS = 2;
 export const TICK_MS = 5 * 60_000;
 
-export type StrategyKind = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility";
-export const STRATEGY_KINDS: StrategyKind[] = ["scalp", "momentum", "breakout", "reversion", "trend", "conservative", "volatility"];
+export type StrategyKind = "scalp" | "momentum" | "breakout" | "reversion" | "trend" | "conservative" | "volatility" | "rotation";
+export const STRATEGY_KINDS: StrategyKind[] = ["scalp", "momentum", "breakout", "reversion", "trend", "conservative", "volatility", "rotation"];
 /** Strategies that only ever buy, whatever their `shorts` setting. */
-export const LONG_ONLY: ReadonlySet<StrategyKind> = new Set(["conservative"]);
+export const LONG_ONLY: ReadonlySet<StrategyKind> = new Set(["conservative", "rotation"]);
 
 export const STRATEGY_INFO: Record<
   StrategyKind,
@@ -38,7 +38,7 @@ export const STRATEGY_INFO: Record<
 > = {
   scalp: {
     label: "Scalper",
-    about: "catches small quick moves in the last 15 minutes; tight targets, out within 2 hours",
+    about: "catches a sharp move over the last few bars; tight targets, short holds",
     tp: 1.2,
     sl: 0.8,
     maxHoldH: 2,
@@ -46,7 +46,7 @@ export const STRATEGY_INFO: Record<
   },
   momentum: {
     label: "Momentum",
-    about: "rides a coin moving hard over the last 30 minutes",
+    about: "rides a coin moving hard over the last several bars",
     tp: 2.5,
     sl: 1.5,
     maxHoldH: 8,
@@ -54,7 +54,7 @@ export const STRATEGY_INFO: Record<
   },
   breakout: {
     label: "Breakout",
-    about: "buys a break above the 2-hour high, shorts a break below the 2-hour low",
+    about: "buys a break above the recent high, shorts a break below the recent low",
     tp: 3,
     sl: 1.5,
     maxHoldH: 10,
@@ -70,7 +70,7 @@ export const STRATEGY_INFO: Record<
   },
   trend: {
     label: "Trend follower",
-    about: "follows the 30-minute average crossing the 2-hour average, with a trailing stop",
+    about: "follows a fast average crossing a slow one, with a trailing stop",
     tp: 6,
     sl: 2,
     maxHoldH: 24,
@@ -84,9 +84,17 @@ export const STRATEGY_INFO: Record<
     maxHoldH: 6,
     warmup: 25,
   },
+  rotation: {
+    label: "Rotation",
+    about: "holds the strongest coin in the market by its return over the last few days, and moves on when it drops out of the leaders; trades rarely",
+    tp: 12,
+    sl: 6,
+    maxHoldH: 120,
+    warmup: 73,
+  },
   volatility: {
     label: "Volatility breakout",
-    about: "jumps on a coin whose swings suddenly double against the last two hours, in the direction it breaks; wide targets, short holds",
+    about: "jumps on a coin whose swings suddenly widen against their recent calm, in the direction it breaks; wide targets, short holds",
     tp: 4,
     sl: 2,
     maxHoldH: 6,
@@ -114,8 +122,14 @@ export const BAR_LABEL: Record<Bar, string> = { 1: "5-minute", 3: "15-minute", 1
  *           average (0 = off)
  *   trail   trailing stop, % off the best price once in profit (0 = off)
  *   hold    the most bars to stay in a trade
+ *   regime  1 = follow Bitcoin's trend: buy only while Bitcoin is above its
+ *           7-day average, short only while below (0 = off)
+ *   entry   1 = enter with a resting limit order at the signal's price
+ *           (cheaper maker fee, no spread, but it may never fill); 0 = at market
+ * Rotation: `look` is the return window, `fast` how many leaders count as
+ * "the top" (it leaves when its coin falls out), `thr` the least % return.
  */
-export type Genes = { bar: Bar; look: number; fast: number; thr: number; filter: number; trail: number; hold: number };
+export type Genes = { bar: Bar; look: number; fast: number; thr: number; filter: number; trail: number; hold: number; regime?: number; entry?: number };
 
 /** Each strategy's own genes: exactly how it has always traded. */
 export const DEFAULT_GENES: Record<StrategyKind, Genes> = {
@@ -126,7 +140,52 @@ export const DEFAULT_GENES: Record<StrategyKind, Genes> = {
   trend: { bar: 1, look: 24, fast: 6, thr: 0, filter: 0, trail: 0, hold: 288 },
   conservative: { bar: 1, look: 24, fast: 6, thr: 0.4, filter: 0, trail: 0, hold: 72 },
   volatility: { bar: 1, look: 24, fast: 6, thr: 2, filter: 0, trail: 0, hold: 72 },
+  rotation: { bar: 12, look: 72, fast: 3, thr: 2, filter: 0, trail: 0, hold: 120, regime: 1 },
 };
+
+/** Percent thresholds grow with the bar: a 4-hour bar moves more than a 5-minute one. */
+const PCT_THR: ReadonlySet<StrategyKind> = new Set(["scalp", "momentum", "conservative", "rotation"]);
+export const thrScale = (kind: StrategyKind, bar: Bar) => (PCT_THR.has(kind) ? Math.sqrt(bar) : 1);
+
+/**
+ * A kind's usual genes and targets rescaled to `bar`-sized bars: holds span
+ * the same time, % triggers and targets grow with the bar.
+ */
+export function defaultsFor(kind: StrategyKind, bar: Bar): { genes: Genes; tp: number; sl: number } {
+  const info = STRATEGY_INFO[kind];
+  const d = DEFAULT_GENES[kind];
+  const ratio = bar / d.bar;
+  if (ratio === 1) return { genes: { ...d }, tp: info.tp, sl: info.sl };
+  const genes: Genes = {
+    ...d,
+    bar,
+    hold: Math.max(2, Math.round(d.hold / ratio)),
+    look: kind === "rotation" ? Math.max(2, Math.round(d.look / ratio)) : d.look,
+    thr: Math.round(d.thr * (thrScale(kind, bar) / thrScale(kind, d.bar)) * 1000) / 1000,
+  };
+  const k = ratio > 1 ? Math.sqrt(ratio) / 1.5 : Math.sqrt(ratio);
+  return { genes, tp: Math.round(info.tp * k * 100) / 100, sl: Math.round(info.sl * k * 100) / 100 };
+}
+
+/**
+ * The bar size the parish trades when a strategy has no tuned genes. Every
+ * lab run showed 5- and 15-minute strategies losing to trading costs
+ * whatever their settings; hourly bars trade less and catch bigger moves.
+ */
+export const PARISH_BAR: Bar = 12;
+
+/** A kind's parish defaults: hourly bars, trading only with Bitcoin's trend. */
+export function parishDefaults(kind: StrategyKind): { genes: Genes; tp: number; sl: number } {
+  const d = defaultsFor(kind, PARISH_BAR);
+  return { ...d, genes: { ...d.genes, regime: 1 } };
+}
+
+/** A strategy on fast bars without lab genes, moved onto the parish's slower defaults (targets too). */
+export function slowed(st: Strategy): Strategy {
+  if (st.genome || genesOf(st).bar >= PARISH_BAR) return st;
+  const d = parishDefaults(st.kind);
+  return { ...st, genes: d.genes, takeProfitPct: d.tp, stopLossPct: d.sl };
+}
 
 export function genesOf(st: Pick<Strategy, "kind" | "genes">): Genes {
   return st.genes ?? DEFAULT_GENES[st.kind];
@@ -170,6 +229,8 @@ export type Strategy = {
   shorts: boolean;
   /** Why it was chosen, in the villager's words. */
   note?: string;
+  /** The villager's record when the guild last retrained it: later results are judged from here. */
+  since?: { wins: number; losses: number; pnl: number };
 };
 
 export type Position = {
@@ -217,6 +278,8 @@ export type TradeEvent = {
   by?: Approach;
   /** The lab genome behind the strategy, if any. */
   genomeId?: string;
+  /** Filled as a resting limit order (maker fee, no spread). */
+  limit?: boolean;
   reason: string;
   /** The villager's own call at the trading desk, not its strategy's signal. */
   own?: boolean;
@@ -237,8 +300,8 @@ const TEMPER_STRATEGY: Record<Temper, { kind: StrategyKind; size: number; shorts
 /** A villager's own strategy when no council has chosen one: its temperament's, across the whole market. */
 export function defaultStrategy(_id: string, temper: Temper, _market: Asset[]): Strategy {
   const t = TEMPER_STRATEGY[temper];
-  const info = STRATEGY_INFO[t.kind];
-  return { kind: t.kind, coins: [], sizePct: t.size, takeProfitPct: info.tp, stopLossPct: info.sl, shorts: t.shorts };
+  const d = parishDefaults(t.kind);
+  return { kind: t.kind, genes: d.genes, coins: [], sizePct: t.size, takeProfitPct: d.tp, stopLossPct: d.sl, shorts: t.shorts };
 }
 
 /** "the whole market", or the coins a strategy focuses on. */
@@ -300,21 +363,25 @@ export function cleanStrategy(raw: unknown, base: Strategy, market: Asset[], boo
   const chosen = asked && asked !== "none" ? book.find((g) => g.id === asked && !g.retired) : undefined;
   if (chosen) {
     const same = base.genome && (base.genome.book ?? base.genome.id) === chosen.id;
-    return same ? { ...base, coins, sizePct, note } : fromBook(chosen, { coins, sizePct, note });
+    return same ? { ...base, coins, sizePct, note } : { ...fromBook(chosen, { coins, sizePct, note }), ...(base.since ? { since: base.since } : {}) };
   }
   const kindChanged = kind !== base.kind;
   // A villager on a book strategy keeps it (genes and targets) unless it changes kind or leaves the book.
   if (base.genome && base.genes && !kindChanged && asked !== "none") return { ...base, coins, sizePct, note };
+  // A new kind starts from its parish defaults (hourly bars); the same kind keeps its genes.
+  const d = parishDefaults(kind);
+  const genes = !kindChanged && base.genes && !base.genome ? base.genes : d.genes;
+  // Targets too tight for the costs lose money whatever the signal: at least 2% to take, 1% to stop.
   return {
     kind,
     coins,
     sizePct,
-    takeProfitPct: Number.isFinite(tp) && tp > 0 ? clamp(tp, 0.5, 15) : kindChanged ? STRATEGY_INFO[kind].tp : base.takeProfitPct,
-    stopLossPct: Number.isFinite(sl) && sl > 0 ? clamp(sl, 0.3, 10) : kindChanged ? STRATEGY_INFO[kind].sl : base.stopLossPct,
+    takeProfitPct: Number.isFinite(tp) && tp > 0 ? clamp(tp, 2, 25) : kindChanged ? d.tp : base.takeProfitPct,
+    stopLossPct: Number.isFinite(sl) && sl > 0 ? clamp(sl, 1, 12) : kindChanged ? d.sl : base.stopLossPct,
     shorts: typeof r.shorts === "boolean" ? r.shorts : base.shorts,
     note,
-    // Tuned genes (without a book genome) stay with the same kind of strategy; a new kind starts from its defaults.
-    ...(!kindChanged && base.genes && !base.genome ? { genes: base.genes } : {}),
+    genes,
+    ...(base.since ? { since: base.since } : {}),
   };
 }
 
@@ -394,6 +461,12 @@ function rawSignal(kind: StrategyKind, s: Series, g: Genes): Signal {
         strength: Math.min(5, recent / before),
       };
     }
+    case "rotation": {
+      // Every coin's return over the window; the scan takes the strongest (see tradeStep).
+      const c = change(s, g.look);
+      if (c === null || c <= g.thr) return null;
+      return { side: "long", reason: `leads the market, +${c.toFixed(1)}% in ${spanLabel(g.look, g.bar)}`, strength: c };
+    }
     case "trend": {
       const fast = sma(s, g.fast);
       const slow = sma(s, g.look);
@@ -446,6 +519,27 @@ export type Trader = {
   knowledge?: Knowledge;
   /** The most of its purse it may lose on one trade, by its rank (./ranks.ts); the global cap applies too. */
   riskCap?: number;
+  /** The edge its own calls need (higher while the desk is on probation: ./risk.ts `deskProbation`). */
+  minEdge?: number;
+  /** Bitcoin's trend (./indicators.ts `regimeOf`): strategies with the regime gene trade only with it. */
+  regime?: Regime;
+  /** A resting limit order to open, waiting to be filled (strategies with the limit-entry gene). */
+  pending?: PendingOrder;
+};
+
+export type Regime = "bull" | "bear";
+
+export type PendingOrder = {
+  coin: Asset;
+  side: "long" | "short";
+  /** The price it rests at. */
+  limit: number;
+  stake: number;
+  placedAt: number;
+  /** Cancelled if not filled by then (one bar). */
+  expires: number;
+  reason: string;
+  by: StrategyKind;
 };
 
 type Step = { trader: Trader; event: TradeEvent | null };
@@ -466,11 +560,12 @@ export function unrealized(p: Position, priceUsd: number): number {
 }
 
 /** Close the open position at `px`: pay the fee, bank the P&L, remember how it went. */
-function closeAt(trader: Trader, pos: Position, exec: Executor, now: number, reason: string, own = false): Step {
-  const fill = exec.close(pos.coin, pos.side, pos.stake, pos.qty);
+function closeAt(trader: Trader, pos: Position, exec: Executor, now: number, reason: string, own = false, limit?: number): Step {
+  // A take-profit rests on the book at its target: filled there, at the maker fee, with no spread to cross.
+  const fill = limit ? { price: limit, mid: limit, cost: 0 } : exec.close(pos.coin, pos.side, pos.stake, pos.qty);
   const px = fill.price;
   const gross = unrealized(pos, px);
-  const fee = Math.round((pos.stake + gross) * exec.feeRate);
+  const fee = Math.round((pos.stake + gross) * (limit ? exec.makerFeeRate : exec.feeRate));
   // A purse can't go below nothing: a loss bigger than the purse takes only what is there.
   const balance = Math.max(0, trader.balance + gross - fee);
   const pnl = balance - trader.balance;
@@ -512,15 +607,18 @@ function closeAt(trader: Trader, pos: Position, exec: Executor, now: number, rea
 /** Send an order to open to the executor; a rejected order changes nothing and says why. */
 function openAt(
   trader: Trader,
-  open: { coin: Asset; side: "long" | "short"; stake: number; reason: string; by: Approach; own?: Position["own"]; sl: number; genes?: Genes; genomeId?: string },
+  open: { coin: Asset; side: "long" | "short"; stake: number; reason: string; by: Approach; own?: Position["own"]; sl: number; genes?: Genes; genomeId?: string; limit?: number },
   now: number,
   exec: Executor,
 ): Step & { rejected?: string; rejectedOrder?: RejectedOrder } {
-  const fill = exec.open(open.coin, open.side, open.stake);
-  if (!fill.ok) {
-    return { trader, event: null, rejected: fill.reason, rejectedOrder: { coin: open.coin, side: open.side, stake: open.stake, by: open.by, reason: fill.reason } };
+  // The exchange's rules (minimum size, lot precision, volume) apply to a limit order too.
+  const market = exec.open(open.coin, open.side, open.stake);
+  if (!market.ok) {
+    return { trader, event: null, rejected: market.reason, rejectedOrder: { coin: open.coin, side: open.side, stake: open.stake, by: open.by, reason: market.reason } };
   }
-  const fee = Math.round(fill.stake * exec.feeRate);
+  // A filled limit order: at its price, the maker fee, and no spread or slippage.
+  const fill = open.limit ? { ...market, price: open.limit, mid: open.limit, cost: 0, qty: market.qty ? (market.qty * market.price) / open.limit : 0 } : market;
+  const fee = Math.round(fill.stake * (open.limit ? exec.makerFeeRate : exec.feeRate));
   const position: Position = {
     coin: open.coin,
     side: open.side,
@@ -554,6 +652,7 @@ function openAt(
       ...(fill.qty ? { qty: fill.qty } : {}),
       ...(open.own ? { own: true } : {}),
       ...(open.genomeId ? { genomeId: open.genomeId } : {}),
+      ...(open.limit ? { limit: true } : {}),
     },
   };
 }
@@ -597,40 +696,85 @@ export function tradeStep(
     const movePct = ((px - pos.entryUsd) / pos.entryUsd) * 100 * (pos.side === "long" ? 1 : -1);
     const fromPeakPct = ((px - peak) / peak) * 100 * (pos.side === "long" ? -1 : 1);
     let reason: string | null = null;
-    if (movePct >= tp) reason = `take-profit +${movePct.toFixed(2)}%`;
-    else if (movePct <= -sl) reason = `stop-loss ${movePct.toFixed(2)}%`;
+    if (movePct >= tp) {
+      // Its take-profit was resting on the book at the target all along.
+      const target = pos.entryUsd * (1 + ((pos.side === "long" ? 1 : -1) * tp) / 100);
+      return closeAt(trader, pos, exec, now, `take-profit +${tp.toFixed(2)}%`, false, target);
+    }
+    if (movePct <= -sl) reason = `stop-loss ${movePct.toFixed(2)}%`;
     else if (trail > 0 && movePct > 0 && fromPeakPct >= trail) reason = `trailing stop, ${fromPeakPct.toFixed(2)}% off the peak`;
+    else if (kind === "rotation") reason = rotationExit(pos.coin, universe.length ? universe : [pos.coin], (c) => seriesOf(c, g.bar), g);
     else if (kind) reason = exitSignal(kind, pos.side, seriesOf(pos.coin, g.bar), g);
     if (!reason && now - pos.openedAt >= maxHoldH * 3_600_000) reason = `time limit (${maxHoldH}h)`;
     if (!reason) return { trader: { ...trader, position: { ...pos, peakUsd: peak } }, event: null };
     return closeAt(trader, pos, exec, now, reason);
   }
 
-  const scan = st.coins.length ? st.coins : universe.length ? universe : st.coins;
   const genes = genesOf(st);
+  const genomeId = st.genome ? st.genome.book ?? st.genome.id : undefined;
+  let me = trader;
+  if (me.pending) {
+    const p = me.pending;
+    if (exec.limitFilled(p.coin, p.side, p.limit)) {
+      const rest = { ...me, pending: undefined };
+      // Risk limits are checked again when it fills; a blocked fill is cancelled.
+      if (gate(p.coin, p.stake)) return { trader: rest, event: null };
+      return openAt(rest, { coin: p.coin, side: p.side, stake: p.stake, reason: `${p.reason} (limit filled)`, by: p.by, sl: st.stopLossPct, genes, genomeId, limit: p.limit }, now, exec);
+    }
+    if (now < p.expires) return { trader: me, event: null };
+    // Unfilled for a whole bar: cancelled (it costs nothing), and it may place a fresh one below.
+    me = { ...me, pending: undefined };
+  }
+
+  const scan = st.coins.length ? st.coins : universe.length ? universe : st.coins;
   let best: { coin: Asset; sig: NonNullable<Signal>; px: number; score: number } | null = null;
   for (const coin of scan) {
-    if (trader.cooldownCoin === coin && (trader.cooldownUntil ?? 0) > now) continue;
-    if (avoids(trader.knowledge, coin)) continue;
+    if (me.cooldownCoin === coin && (me.cooldownUntil ?? 0) > now) continue;
+    if (avoids(me.knowledge, coin)) continue;
     const px = priceOf(coin);
     if (!(px > 0)) continue;
     const sig = entrySignal(st.kind, seriesOf(coin, genes.bar), genes);
     if (!sig || (sig.side === "short" && (!st.shorts || LONG_ONLY.has(st.kind)))) continue;
+    // With the regime gene it trades only with Bitcoin's trend: no buying while it falls, no shorting while it rises.
+    if (genes.regime && me.regime && (me.regime === "bull" ? sig.side === "short" : sig.side === "long")) continue;
     if (gate(coin, 0)) continue;
-    // Coins it has done well on count for more; focus coins win ties in their listed order.
-    const score = Math.min(sig.strength, 5) * (1 + 0.5 * coinEdge(trader.knowledge, coin)) * (hot.has(coin) ? 1.15 : 1);
+    // Coins it has done well on count for more; focus coins win ties in their listed order. Rotation simply takes the leader.
+    const score =
+      st.kind === "rotation" ? sig.strength : Math.min(sig.strength, 5) * (1 + 0.5 * coinEdge(me.knowledge, coin)) * (hot.has(coin) ? 1.15 : 1);
     if (!best || score > best.score) best = { coin, sig, px, score };
   }
-  if (!best) return { trader, event: null };
-  const risk = Math.min(strategyRisk(trader.knowledge, st.kind, best.coin, st.takeProfitPct, st.stopLossPct), trader.riskCap ?? 1);
-  const stake = Math.min(stakeFor(trader.balance, st.sizePct, stakeSats), stakeForRisk(trader.balance, risk, st.stopLossPct));
-  if (stake <= 0 || gate(best.coin, stake)) return { trader, event: null };
-  return openAt(
-    trader,
-    { coin: best.coin, side: best.sig.side, stake, reason: best.sig.reason, by: st.kind, sl: st.stopLossPct, genes: genesOf(st), ...(st.genome ? { genomeId: st.genome.book ?? st.genome.id } : {}) },
-    now,
-    exec,
-  );
+  if (!best) return { trader: me, event: null };
+  const risk = Math.min(strategyRisk(me.knowledge, st.kind, best.coin, st.takeProfitPct, st.stopLossPct), me.riskCap ?? 1);
+  const stake = Math.min(stakeFor(me.balance, st.sizePct, stakeSats), stakeForRisk(me.balance, risk, st.stopLossPct));
+  if (stake <= 0 || gate(best.coin, stake)) return { trader: me, event: null };
+  if (genes.entry) {
+    // A resting limit order at the signal's price, for one bar.
+    const pending: PendingOrder = {
+      coin: best.coin,
+      side: best.sig.side,
+      limit: best.px,
+      stake,
+      placedAt: now,
+      expires: now + genes.bar * TICK_MS,
+      reason: best.sig.reason,
+      by: st.kind,
+    };
+    return { trader: { ...me, pending }, event: null };
+  }
+  return openAt(me, { coin: best.coin, side: best.sig.side, stake, reason: best.sig.reason, by: st.kind, sl: st.stopLossPct, genes, genomeId }, now, exec);
+}
+
+/** Rotation leaves once its coin is no longer among the `fast` strongest over the window. */
+function rotationExit(coin: Asset, universe: Asset[], seriesOf: (coin: Asset) => Series, g: Genes): string | null {
+  const mine = change(seriesOf(coin), g.look);
+  if (mine === null) return null;
+  let ahead = 0;
+  for (const c of universe) {
+    if (c === coin) continue;
+    const r = change(seriesOf(c), g.look);
+    if (r !== null && r > mine) ahead++;
+  }
+  return ahead >= Math.max(1, g.fast) ? `no longer among the ${Math.max(1, g.fast)} leaders (${ahead + 1}th)` : null;
 }
 
 /** Share of the purse a stake loses at the stop, fees, spread and slippage included. */
@@ -689,7 +833,7 @@ export function deskStep(
   const sl = clamp(order.sl ?? t.strategy.stopLossPct, 0.3, 10);
   if (order.chance === undefined) return { trader, events, skipped: "gave no odds" };
   const p = calibratedChance(t.knowledge, clamp(order.chance, 0, 0.99));
-  const { edge, ok } = edgeOf(p, tp, sl);
+  const { edge, ok } = edgeOf(p, tp, sl, t.minEdge);
   if (!ok) return { trader, events, skipped: `edge too thin (${edge >= 0 ? "+" : ""}${Math.round(edge * 100)} pts)` };
   const blocked = gate(coin, 0);
   if (blocked) return { trader, events, skipped: blocked };

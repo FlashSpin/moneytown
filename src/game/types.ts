@@ -106,6 +106,8 @@ export type Subject = PurseFields & {
   strategy?: import("./strategies.ts").Strategy;
   /** Its open trade, if any. */
   position?: import("./strategies.ts").Position;
+  /** A resting limit order to open, waiting to fill (strategies that enter with limit orders). */
+  pending?: import("./strategies.ts").PendingOrder;
   /** Fills today (opens and closes). */
   trades?: number;
   cooldownUntil?: number;
@@ -165,7 +167,7 @@ export type GameState = {
   /** When the villagers last traded (the 5-minute tick). */
   lastTickAt?: number;
   /** The trading desk: when the villagers next look at the market with the AI to place their own trades, and what it said last. */
-  desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo; error?: string };
+  desk?: { at: number; nextAt: number; say: string; orders: number; skipped?: number; brain?: BrainInfo; error?: string; probation?: string };
   /** When the King last reviewed the parish's trades (ms since epoch). */
   lastReviewAt?: number;
   /**

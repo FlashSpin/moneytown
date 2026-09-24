@@ -6,12 +6,15 @@ import {
   deskStep,
   entrySignal,
   FEE_RATE,
+  parishDefaults,
+  slowed,
   stakeFor,
   tradeStep,
   unrealized,
   type Strategy,
   type Trader,
 } from "./strategies.ts";
+import { MAKER_FEE_RATE } from "./risk.ts";
 
 const flat = (n: number, p = 100) => Array(n).fill(p);
 
@@ -79,13 +82,15 @@ describe("a villager's trading step", () => {
     assert.equal(trader.balance, 100_000 - 50_000 * FEE_RATE);
   });
 
-  it("takes profit at its target, net of the closing fee", () => {
+  it("takes profit at its target (a resting limit order: the maker fee, no better, no worse)", () => {
     const open = tradeStep(base, at(101), hist, 1_000, 20_000).trader;
     const { trader, event } = tradeStep(open, at(103.1), () => flat(10), 2_000, 20_000);
     assert.equal(event?.action, "close");
     assert.match(event!.reason, /take-profit/);
-    const gross = Math.round(50_000 * ((103.1 - 101) / 101));
-    assert.equal(event!.pnl, gross - Math.round((50_000 + gross) * FEE_RATE));
+    const tp = base.strategy.takeProfitPct;
+    assert.ok(Math.abs(event!.price - 101 * (1 + tp / 100)) < 1e-9, "filled at the target, not the tick's price");
+    const gross = Math.round(50_000 * (tp / 100));
+    assert.equal(event!.pnl, gross - Math.round((50_000 + gross) * MAKER_FEE_RATE));
     assert.equal(trader.position, undefined);
     assert.equal(trader.record?.wins, 1);
   });
@@ -146,6 +151,17 @@ describe("a villager's trading step", () => {
 describe("choosing strategies", () => {
   const market = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "LINK"];
 
+  it("moves old fast-bar strategies onto hourly bars, but never a lab genome's", () => {
+    const old: Strategy = { kind: "scalp", coins: [], sizePct: 0.3, takeProfitPct: 1.2, stopLossPct: 0.8, shorts: true };
+    const s = slowed(old);
+    assert.equal(s.genes?.bar, 12);
+    assert.equal(s.genes?.regime, 1);
+    assert.ok(s.takeProfitPct > old.takeProfitPct);
+    const lab = { ...old, genes: { ...s.genes!, bar: 1 as const }, genome: { id: "sca-x", gen: 1 } };
+    assert.equal(slowed(lab), lab);
+    assert.equal(defaultStrategy("s-1", "bold", market).genes?.bar, 12);
+  });
+
   it("gives each temperament its own default, across the whole market", () => {
     const a = defaultStrategy("s-aaa", "cautious", market);
     const b = defaultStrategy("s-zzz", "bold", market);
@@ -161,15 +177,16 @@ describe("choosing strategies", () => {
     assert.equal(s.kind, "scalp");
     assert.deepEqual(s.coins, ["SOL", "ETH", "BTC", "XRP"], "any number of listed coins");
     assert.equal(s.sizePct, 1);
-    assert.equal(s.takeProfitPct, 15);
-    assert.equal(s.stopLossPct, 0.3);
+    assert.equal(s.takeProfitPct, 25);
+    assert.equal(s.stopLossPct, 1, "no stop tighter than the costs can bear");
+    assert.equal(s.genes?.bar, 12, "a new kind trades hourly bars");
   });
 
   it("keeps what it can't read, and uses the new kind's own targets", () => {
     const base = defaultStrategy("s-1", "trend", market);
     const s = cleanStrategy({ kind: "breakout" }, base, market);
     assert.deepEqual(s.coins, base.coins);
-    assert.equal(s.takeProfitPct, 3);
+    assert.equal(s.takeProfitPct, parishDefaults("breakout").tp);
     assert.equal(cleanStrategy("nonsense", base, market).kind, base.kind);
   });
 
@@ -278,5 +295,48 @@ describe("a villager's own calls at the desk", () => {
     const k = { coins: {}, approaches: { own: { w: 1, l: 9, pnl: -900 } }, sides: { long: { w: 0, l: 0, pnl: 0 }, short: { w: 0, l: 0, pnl: 0 } }, lessons: [] };
     const r = deskStep({ ...base, knowledge: k }, { action: "buy", coin: "SOL", chance: 0.75, why: "again" }, priceOf, 0, 20_000);
     assert.match(r.skipped!, /edge too thin/, "75% claimed, but it wins 1 in 10");
+  });
+});
+
+describe("cheaper fills, Bitcoin's trend and rotation", () => {
+  const strat: Strategy = { kind: "momentum", coins: ["SOL"], sizePct: 0.5, takeProfitPct: 2, stopLossPct: 1, shorts: true, genes: { bar: 1, look: 6, fast: 3, thr: 0.8, filter: 0, trail: 0, hold: 96, entry: 1 } };
+  const base: Trader = { id: "s-1", firstName: "Agnes", balance: 100_000, strategy: strat };
+  const up = () => [...flat(6), 101];
+
+  it("rests a limit order at the signal's price, fills it at the maker fee when the price comes to it, else cancels it after a bar", () => {
+    const placed = tradeStep(base, () => 101, up, 1_000, 20_000);
+    assert.equal(placed.event, null);
+    assert.equal(placed.trader.pending?.limit, 101);
+    const waiting = tradeStep(placed.trader, () => 101.5, up, 1_000 + 60_000, 20_000);
+    assert.equal(waiting.event, null, "the price ran away: still resting");
+    const filled = tradeStep(placed.trader, () => 100.9, up, 1_000 + 120_000, 20_000);
+    assert.equal(filled.event?.action, "open");
+    assert.equal(filled.event?.limit, true);
+    assert.equal(filled.event?.price, 101);
+    assert.equal(filled.trader.balance, 100_000 - Math.round(50_000 * MAKER_FEE_RATE));
+    assert.equal(filled.trader.pending, undefined);
+    const expired = tradeStep(placed.trader, () => 102, () => flat(7, 102), 1_000 + 5 * 60_000, 20_000);
+    assert.equal(expired.trader.pending, undefined, "unfilled after a bar: cancelled, at no cost");
+    assert.equal(expired.trader.balance, 100_000);
+  });
+
+  it("with the regime gene, buys only while Bitcoin rises", () => {
+    const s = { ...strat, genes: { ...strat.genes!, entry: 0, regime: 1 } };
+    assert.equal(tradeStep({ ...base, strategy: s, regime: "bear" }, () => 101, up, 1_000, 20_000).event, null);
+    assert.equal(tradeStep({ ...base, strategy: s, regime: "bull" }, () => 101, up, 1_000, 20_000).event?.action, "open");
+    const off = { ...strat, genes: { ...strat.genes!, entry: 0, regime: 0 } };
+    assert.equal(tradeStep({ ...base, strategy: off, regime: "bear" }, () => 101, up, 1_000, 20_000).event?.action, "open", "gene off: ignores it");
+  });
+
+  it("rotation holds the market's leader and leaves when it drops out of the top", () => {
+    const rot: Strategy = { kind: "rotation", coins: [], sizePct: 0.5, takeProfitPct: 20, stopLossPct: 10, shorts: false, genes: { bar: 12, look: 3, fast: 1, thr: 1, filter: 0, trail: 0, hold: 100 } };
+    const hist: Record<string, number[]> = { A: [100, 101, 102, 103], B: [100, 102, 105, 110], C: [100, 99, 98, 97] };
+    const px = (c: string) => hist[c]![hist[c]!.length - 1]!;
+    const open = tradeStep({ ...base, strategy: rot }, px, (c) => hist[c]!, 1_000, 20_000, ["A", "B", "C"]);
+    assert.equal(open.event?.coin, "B");
+    const later: Record<string, number[]> = { A: [103, 106, 108, 112], B: [110, 110, 110, 110.5], C: [97, 97, 97, 97] };
+    const out = tradeStep(open.trader, (c) => later[c]!.at(-1)!, (c) => later[c]!, 2_000, 20_000, ["A", "B", "C"]);
+    assert.equal(out.event?.action, "close");
+    assert.match(out.event!.reason, /no longer among the 1 leaders/);
   });
 });

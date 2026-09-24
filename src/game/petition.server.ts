@@ -29,7 +29,7 @@ import { priceOf, scanCoins } from "./dawn";
 import { describeKnowledge } from "./knowledge";
 import { Journal, KING, villagerAccount, withPostings } from "./ledger";
 import { strategyChanges } from "./paper";
-import { describe as describeGenome, trainNewcomer } from "./lab";
+import { crowdOf, describe as describeGenome, trainNewcomer } from "./lab";
 import { BAR_LABEL, cleanStrategy, coinsLabel, defaultStrategy, genesOf, STRATEGY_KINDS, unrealized } from "./strategies";
 import { formatCoinPrice } from "@/lib/market";
 import { temperOf } from "./trading";
@@ -446,7 +446,13 @@ function applyDecision(row: WorldRow, decision: Decision, sovereign: boolean) {
   const summoned: string[] = [];
   for (let i = 0; i < count; i++) {
     const soul = makeSubject(rng, taken, stake, state.day);
-    const trained = trainNewcomer(state.lab?.pool ?? [], rng, defaultStrategy(soul.id, soul.temper ?? temperOf(soul.id), []), decision.summonAs);
+    const trained = trainNewcomer(
+      state.lab?.pool ?? [],
+      rng,
+      defaultStrategy(soul.id, soul.temper ?? temperOf(soul.id), []),
+      decision.summonAs,
+      crowdOf(subjects.filter((x) => x.state !== "condemned" && x.state !== "hanging").map((x) => x.strategy)),
+    );
     if (trained) soul.strategy = trained;
     // Summoned souls step out of the castle gate and walk to their spot.
     soul.x = POI.kingStand.x + (rng() - 0.5) * 30;

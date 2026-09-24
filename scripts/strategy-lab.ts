@@ -8,7 +8,7 @@
  *   node --experimental-strip-types scripts/strategy-lab.ts
  *
  * Env: SITE_URL, CRON_SECRET (to post), POST_RESULTS=1, LAB_MINUTES (time
- * budget, default 30), DAYS_5M (default 60), DAYS_1H (default 365), COINS
+ * budget, default 30), DAYS_1H (default 1095: three years), COINS
  * (comma list), POPULATION, GENERATIONS, SEED.
  */
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -22,7 +22,7 @@ const env = process.env;
 const SITE = (env.SITE_URL || "https://moneytown.vercel.app").replace(/\/$/, "");
 const DATA = "lab-data";
 const OPTS = { balance: 1_000_000, stakeSats: 20_000 };
-const DEFAULT_COINS = "BTC,ETH,SOL,XRP,DOGE,ADA,AVAX,LINK,DOT,LTC,BCH,UNI,AAVE,NEAR,ATOM,XLM,FIL,ETC,ALGO,HBAR";
+const DEFAULT_COINS = "BTC,ETH,SOL,XRP,DOGE,ADA,AVAX,LINK,DOT,LTC,BCH,UNI,AAVE,NEAR,ATOM,XLM,FIL,ETC,ALGO,HBAR,SHIB,APT,ARB,OP,INJ,SUI,MKR,GRT,CRV,SAND";
 
 type Job = { niches: Niche[]; seeds: Record<string, PoolEntry[]>; deadline: number; population: number; generations: number; seed: number };
 
@@ -86,30 +86,26 @@ async function candles(coin: string, minutes: 5 | 60, days: number): Promise<{ r
   }
 }
 
-async function fetchData(coins: string[], days5: number, daysH: number) {
-  const m5: Record<string, Candle[]> = {};
+/** Hourly candles only: every niche the lab breeds is on hourly or 4-hour bars (src/game/lab.ts SLOW_BARS). */
+async function fetchData(coins: string[], daysH: number) {
   const h1: Record<string, Candle[]> = {};
   const sources: Record<string, string> = {};
   for (const coin of coins) {
     try {
-      const a = await candles(coin, 5, days5);
       const b = await candles(coin, 60, daysH);
-      m5[coin] = a.rows;
       h1[coin] = b.rows;
-      sources[coin] = a.source === b.source ? a.source : `${a.source}/${b.source}`;
-      console.log(`  ${coin}: ${a.rows.length} × 5m, ${b.rows.length} × 1h (${sources[coin]})`);
+      sources[coin] = b.source;
+      console.log(`  ${coin}: ${b.rows.length} × 1h (${b.source})`);
     } catch (e) {
       console.log(`  ${coin}: skipped — ${e instanceof Error ? e.message : e}`);
     }
   }
-  return { m5, h1, sources };
+  return { h1, sources };
 }
 
-function grids(m5: Record<string, Candle[]>, h1: Record<string, Candle[]>): Record<Bar, Grid> {
+function grids(h1: Record<string, Candle[]>): Partial<Record<Bar, Grid>> {
   const map = (src: Record<string, Candle[]>, f: (c: Candle[]) => Candle[]) => Object.fromEntries(Object.entries(src).map(([k, v]) => [k, f(v)]));
   return {
-    1: candleGrid(m5, 5 * 60_000),
-    3: candleGrid(map(m5, (c) => coarsen(c, 5 * 60_000, 3)), 15 * 60_000),
     12: candleGrid(h1, 60 * 60_000),
     48: candleGrid(map(h1, (c) => coarsen(c, 60 * 60_000, 4)), 4 * 60 * 60_000),
   };
@@ -119,13 +115,13 @@ function grids(m5: Record<string, Candle[]>, h1: Record<string, Candle[]>): Reco
 
 if (!isMainThread) {
   const job = workerData as Job;
-  const raw = JSON.parse(readFileSync(`${DATA}/candles.json`, "utf8")) as { m5: Record<string, Candle[]>; h1: Record<string, Candle[]> };
-  const g = grids(raw.m5, raw.h1);
+  const raw = JSON.parse(readFileSync(`${DATA}/candles.json`, "utf8")) as { h1: Record<string, Candle[]> };
+  const g = grids(raw.h1);
   const n = job.niches.length;
   job.niches.forEach((niche, k) => {
     const started = Date.now();
     const deadline = started + ((job.deadline - started) / (n - k)) * 1;
-    const res = evolveNiche(g[niche.bar], niche, {
+    const res = evolveNiche(g[niche.bar]!, niche, {
       ...OPTS,
       seed: job.seed + k * 7919,
       population: job.population,
@@ -144,28 +140,27 @@ const brief = (s: Score) => `${String(s.trades).padStart(4)} trades ${pct(s.ret)
 
 async function main() {
   const coins = (env.COINS || DEFAULT_COINS).split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
-  const days5 = Number(env.DAYS_5M || 60);
-  const daysH = Number(env.DAYS_1H || 365);
+  const daysH = Number(env.DAYS_1H || 1095);
   const minutes = Number(env.LAB_MINUTES || 30);
   const seed = Number(env.SEED || Math.floor(Date.now() / 86_400_000));
   const population = Number(env.POPULATION || 40);
   const generations = Number(env.GENERATIONS || 40);
   const started = Date.now();
 
-  console.log(`Strategy lab — ${coins.length} coins, ${days5} days of 5-minute and ${daysH} days of hourly candles, ${minutes} min budget, seed ${seed}`);
+  console.log(`Strategy lab — ${coins.length} coins, ${daysH} days of hourly candles, ${minutes} min budget, seed ${seed}`);
   // The book so far: each run starts from the previous run's best.
   const bookRes = (await getJson(`${SITE}/api/lab`, 2)) as { pool?: PoolEntry[] };
   const book = Array.isArray(bookRes?.pool) ? bookRes.pool : [];
   console.log(`Guild book: ${book.length} genomes to start from`);
 
   console.log("Fetching candles…");
-  const { m5, h1, sources } = await fetchData(coins, days5, daysH);
-  if (Object.keys(m5).length < 3) throw new Error("not enough market data");
+  const { h1, sources } = await fetchData(coins, daysH);
+  if (Object.keys(h1).length < 3) throw new Error("not enough market data");
   mkdirSync(DATA, { recursive: true });
-  writeFileSync(`${DATA}/candles.json`, JSON.stringify({ m5, h1 }));
-  const g = grids(m5, h1);
-  for (const bar of [1, 3, 12, 48] as Bar[]) {
-    const gr = g[bar];
+  writeFileSync(`${DATA}/candles.json`, JSON.stringify({ h1 }));
+  const g = grids(h1);
+  for (const bar of [12, 48] as Bar[]) {
+    const gr = g[bar]!;
     console.log(`  ${BAR_LABEL[bar]} grid: ${gr.t.length} bars, ${new Date(gr.t[0]!).toISOString().slice(0, 10)} → ${new Date(gr.t[gr.t.length - 1]!).toISOString().slice(0, 10)}`);
   }
 
@@ -207,7 +202,7 @@ async function main() {
   const lines: string[] = [];
   lines.push(`## Strategy lab — ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC`);
   lines.push("");
-  lines.push(`${results.reduce((n, r) => n + r.evaluated, 0)} strategies backtested across ${results.length} niches on ${Object.keys(m5).length} coins. **${proven.length} proven** (made money on train, validation and the untouched test data — the last two together clearly — and with 1.5× costs).`);
+  lines.push(`${results.reduce((n, r) => n + r.evaluated, 0)} strategies backtested across ${results.length} niches on ${Object.keys(h1).length} coins. **${proven.length} proven** (made money on train, validation and the untouched test data — the last two together clearly — and with 1.5× costs).`);
   lines.push("");
   lines.push("| Niche | Champion | Train | Validation | Test | Usual settings, test | Proven |");
   lines.push("|---|---|---|---|---|---|---|");
@@ -223,7 +218,7 @@ async function main() {
     at,
     seed,
     minutes: Math.round((at - started) / 60_000),
-    data: { coins: Object.keys(m5), sources, days5, daysH, bars: Object.fromEntries(Object.entries(g).map(([k, v]) => [k, v.t.length])) },
+    data: { coins: Object.keys(h1), sources, daysH, bars: Object.fromEntries(Object.entries(g).map(([k, v]) => [k, v.t.length])) },
     niches: results.map((r) => ({ niche: nicheKey(r.niche), evaluated: r.evaluated, generations: r.generations, curve: r.curve, baseline: r.baseline, champion: r.champion?.id ?? null, proven: !!r.champion?.proven })),
     found,
   };

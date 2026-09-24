@@ -19,7 +19,7 @@ import { councilStrategies, isLiving, wealthLine } from "./review.server";
 import { Journal, KING, MARKET, villagerAccount, withPostings } from "./ledger";
 import { strategyChanges } from "./paper";
 import { advanceSeason, checkMilestones, parishWealth, SEASONS_KEPT, type DawnBook } from "./progress";
-import { trainNewcomer } from "./lab";
+import { crowdOf, needsRetraining, trainNewcomer } from "./lab";
 import { BAR_LABEL, defaultStrategy, genesOf, unrealized } from "./strategies";
 import { coinsNeeded } from "./trade.server";
 import { settleDay, temperOf } from "./trading";
@@ -126,7 +126,13 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   for (let i = 0; i < count; i++) {
     const child = makeSubject(rng, taken, stake, day);
     // Each newcomer is trained in a slightly adjusted copy of the guild book's best.
-    const trained = trainNewcomer(prev.lab?.pool ?? [], rng, defaultStrategy(child.id, child.temper ?? temperOf(child.id), []));
+    const trained = trainNewcomer(
+      prev.lab?.pool ?? [],
+      rng,
+      defaultStrategy(child.id, child.temper ?? temperOf(child.id), []),
+      null,
+      crowdOf(settled.filter(isLiving).map((x) => x.strategy)),
+    );
     if (trained) child.strategy = trained;
     child.dayStart = stake;
     kingBalance -= stake;
@@ -142,6 +148,21 @@ export async function runDailyTick(prev: GameState): Promise<GameState> {
   // The strategy council for the new day.
   const opening: GameState = { ...prev, day, tape, king: { ...prev.king, balance: kingBalance } };
   const review = await councilStrategies(opening, settled, tape, { dawn: true, rng, now });
+  // The guild retrains strugglers: a villager losing money (or on a retired guild strategy) gets a book strategy instead.
+  const pool = prev.lab?.pool ?? [];
+  if (pool.length) {
+    review.subjects = review.subjects.map((s) => {
+      if (!isLiving(s)) return s;
+      const why = needsRetraining(s, pool);
+      if (!why) return s;
+      const others = review.subjects.filter((x) => x.id !== s.id && isLiving(x)).map((x) => x.strategy);
+      const trained = trainNewcomer(pool, rng, s.strategy ?? defaultStrategy(s.id, s.temper ?? temperOf(s.id), []), null, crowdOf(others));
+      if (!trained || trained.genome?.book === (s.strategy?.genome?.book ?? s.strategy?.genome?.id)) return s;
+      push("subject", `${s.firstName} ${why}, and is retrained by the guild in its ${trained.kind} (${trained.genome?.book}, ${BAR_LABEL[genesOf(trained).bar]} bars).`);
+      // The new strategy is judged on its own trades, from here.
+      return { ...s, strategy: { ...trained, note: "Retrained by the guild.", since: s.record ?? { wins: 0, losses: 0, pnl: 0 } } };
+    });
+  }
   const council = review.council;
   const brain = review.parish?.brain ?? council?.brain ?? { kind: "heuristic" as const, label: "Heuristic (period English)" };
 

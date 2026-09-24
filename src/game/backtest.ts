@@ -17,8 +17,9 @@
 import type { Asset } from "./dawn.ts";
 import { EST_HALF_SPREAD, EST_HALF_SPREAD_TOP, type Executor } from "./execution.ts";
 import { VILLAGER_DAILY_LOSS } from "./limits.ts";
-import { FEE_RATE } from "./risk.ts";
-import { genesOf, STRATEGY_INFO, tradeStep, unrealized, warmupOf, type Strategy, type TradeEvent, type Trader } from "./strategies.ts";
+import { FEE_RATE, MAKER_FEE_RATE } from "./risk.ts";
+import { sma } from "./indicators.ts";
+import { genesOf, STRATEGY_INFO, tradeStep, unrealized, warmupOf, type Regime, type Strategy, type TradeEvent, type Trader } from "./strategies.ts";
 
 export const BAR_MS = 5 * 60_000;
 /** Samples a default strategy needs at most (its longest indicator plus room); tuned genes may need more. */
@@ -212,6 +213,13 @@ function nextBarExecutor(g: Grid, i: number, costs: number, top: ReadonlySet<Ass
   const slip = (coin: Asset) => ((top.has(coin) ? EST_HALF_SPREAD_TOP : EST_HALF_SPREAD) + EST_SLIPPAGE) * costs;
   return {
     feeRate: FEE_RATE * costs,
+    makerFeeRate: MAKER_FEE_RATE * costs,
+    // A resting limit order fills only if bar i traded THROUGH its price (touching it isn't enough: others were queued first).
+    limitFilled(coin, side, limit) {
+      const lo = g.low?.[coin]?.[i] ?? g.px[coin]?.[i];
+      const hi = g.high?.[coin]?.[i] ?? g.px[coin]?.[i];
+      return side === "long" ? has(lo) && lo < limit : has(hi) && hi > limit;
+    },
     open(coin, side, stake) {
       const mid = at(coin, i + 1);
       if (!mid || !(stake > 0)) return { ok: false, reason: "rejected: no next price" };
@@ -255,6 +263,28 @@ function intrabarHit(g: Grid, trader: Trader, i: number): { coin: Asset; price: 
   return undefined;
 }
 
+/** Hours of Bitcoin's average that decide the regime (as live: ./indicators.ts REGIME_HOURS). */
+export const REGIME_HOURS = 168;
+const regimes = new WeakMap<Grid, (Regime | undefined)[]>();
+
+/** Bitcoin's regime at each bar: above its 7-day average is a bull market, below a bear. */
+export function regimeSeries(g: Grid): (Regime | undefined)[] {
+  const hit = regimes.get(g);
+  if (hit) return hit;
+  const btc = g.px.BTC;
+  const n = Math.max(2, Math.round((REGIME_HOURS * 3_600_000) / (g.barMs ?? BAR_MS)));
+  const out: (Regime | undefined)[] = Array(g.t.length).fill(undefined);
+  if (btc) {
+    for (let i = 0; i < g.t.length; i++) {
+      const s = seriesAt(g, "BTC", i, n);
+      const avg = s.length >= n ? sma(s, n) : null;
+      if (avg !== null) out[i] = s[s.length - 1]! > avg ? "bull" : "bear";
+    }
+  }
+  regimes.set(g, out);
+  return out;
+}
+
 /** Replay one strategy over the grid. */
 export function runBacktest(g: Grid, cfg: RunConfig): RunResult {
   const costs = cfg.costs ?? 1;
@@ -272,6 +302,8 @@ export function runBacktest(g: Grid, cfg: RunConfig): RunResult {
   let day = -1;
   let inMarket = 0;
   const noHot: ReadonlySet<Asset> = new Set();
+  const regime = regimeSeries(g);
+  const rotation = cfg.strategy.kind === "rotation";
 
   for (let i = from; i < to - 1; i++) {
     const now = g.t[i]!;
@@ -289,7 +321,8 @@ export function runBacktest(g: Grid, cfg: RunConfig): RunResult {
     const hit = intrabarHit(g, trader, i);
     const priceOf = hit ? (coin: Asset) => (coin === hit.coin ? hit.price : close(coin)) : close;
     const universe: Asset[] = [];
-    if (!trader.position) for (let k = 0; k < coins.length; k++) if (has(cols[k]![i])) universe.push(coins[k]!);
+    if (!trader.position || rotation) for (let k = 0; k < coins.length; k++) if (has(cols[k]![i])) universe.push(coins[k]!);
+    trader = { ...trader, regime: regime[i] };
     const step = tradeStep(
       trader,
       priceOf,
@@ -303,6 +336,21 @@ export function runBacktest(g: Grid, cfg: RunConfig): RunResult {
     );
     trader = step.trader;
     if (step.event) events.push(step.event);
+    // A limit order filled inside this bar: if the same bar then fell through its stop, it was stopped out (the cautious reading).
+    const filled = trader.position;
+    if (step.event?.action === "open" && step.event.limit && filled && g.low && g.high) {
+      const sl = trader.strategy.stopLossPct;
+      const long = filled.side === "long";
+      const stop = filled.entryUsd * (1 + (long ? -1 : 1) * (sl / 100) * (1 + 1e-9));
+      const lo = g.low[filled.coin]?.[i];
+      const hi = g.high[filled.coin]?.[i];
+      if (long ? has(lo) && lo <= stop : has(hi) && hi >= stop) {
+        const stopHit = { coin: filled.coin, price: stop };
+        const out = tradeStep(trader, (c) => (c === filled.coin ? stop : close(c)), (coin) => seriesAt(g, coin, i, lookback), now, cfg.stakeSats, universe, noHot, () => null, nextBarExecutor(g, i, costs, top, stopHit));
+        trader = out.trader;
+        if (out.event) events.push(out.event);
+      }
+    }
     if (trader.position) inMarket++;
     equity.push(mark());
   }

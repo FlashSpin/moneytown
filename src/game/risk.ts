@@ -14,6 +14,12 @@ import { MIN_SAMPLE, type Approach, type Knowledge, type Tally } from "./knowled
 
 /** Fee per fill (open and close), as a fraction — about what a small account pays an exchange. */
 export const FEE_RATE = 0.004;
+/**
+ * Fee for a resting limit order that another trader fills (a "maker" fill),
+ * as Kraken charges at the lowest volume tier: take-profits always rest at
+ * their target, and strategies may enter with a limit order too.
+ */
+export const MAKER_FEE_RATE = 0.0025;
 /** Both fills' fees, in percent of the stake. */
 export const ROUND_TRIP_PCT = FEE_RATE * 2 * 100;
 /** Spread and slippage on both fills for a typical liquid coin, in percent (see ./execution.ts). */
@@ -93,7 +99,28 @@ export function calibratedChance(k: Knowledge | undefined, estimate: number): nu
 }
 
 /** Whether a call with chance `p` clears the edge bar, and by how much. */
-export function edgeOf(p: number, tp: number, sl: number): { edge: number; ok: boolean } {
+export function edgeOf(p: number, tp: number, sl: number, minEdge = MIN_EDGE): { edge: number; ok: boolean } {
   const edge = p - breakEven(tp, sl);
-  return { edge, ok: edge >= MIN_EDGE };
+  return { edge, ok: edge >= minEdge };
+}
+
+/** The edge an own call needs while the parish's own calls are losing money overall (see `deskProbation`). */
+export const PROBATION_EDGE = 0.15;
+/** Own-call trades the parish needs before its record can put the desk on probation. */
+export const PROBATION_SAMPLE = 20;
+
+/**
+ * Whether the villagers' own calls at the trading desk have been losing
+ * money, across every living villager's record: then the desk is on
+ * probation — asked less often, and a call needs a much clearer edge.
+ */
+export function deskProbation(records: (Tally | undefined)[]): { on: boolean; trades: number; pnl: number } {
+  let trades = 0;
+  let pnl = 0;
+  for (const r of records) {
+    if (!r) continue;
+    trades += r.w + r.l;
+    pnl += r.pnl;
+  }
+  return { on: trades >= PROBATION_SAMPLE && pnl < 0, trades, pnl };
 }

@@ -276,6 +276,21 @@ export function seriesForBar(ticks: Ticks | undefined, coin: string, bar: 1 | 3 
   return out;
 }
 
+/** Hours of Bitcoin's average that decide the market regime (the lab uses the same: ./backtest.ts). */
+export const REGIME_HOURS = 168;
+
+/**
+ * Bitcoin's trend, which nearly every coin follows: "bull" while its last
+ * finished hourly close is above its 7-day average, "bear" below, unknown
+ * without a week of hourly history.
+ */
+export function regimeOf(ticks: Ticks | undefined, now: number): "bull" | "bear" | undefined {
+  const s = seriesForBar(ticks, "BTC", 12, now);
+  const avg = sma(s, REGIME_HOURS);
+  if (avg === null) return undefined;
+  return s[s.length - 1]! > avg ? "bull" : "bear";
+}
+
 /** A compact read of one coin for the King and the villagers' council. */
 export function coinStats(series: number[]): {
   ch1h: number | null;

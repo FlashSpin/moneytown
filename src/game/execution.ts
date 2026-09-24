@@ -15,7 +15,7 @@
  * Purses are in sats; orders are priced in USD at `tape.btcUsd`.
  */
 import type { Asset } from "./dawn.ts";
-import { FEE_RATE } from "./risk.ts";
+import { FEE_RATE, MAKER_FEE_RATE } from "./risk.ts";
 import type { AssetQuote, Tape } from "./types.ts";
 
 export const MIN_SLIPPAGE = 0.0002;
@@ -36,6 +36,13 @@ export type CloseFill = { price: number; mid: number; cost: number };
 export type Executor = {
   /** The exchange's fee per fill, as a fraction of the stake. */
   feeRate: number;
+  /** The fee when a resting limit order is filled (a maker fill). */
+  makerFeeRate: number;
+  /**
+   * Whether a resting limit order to open `side` at `limit` has been filled:
+   * a buy once sellers came down to it, a sell once buyers came up to it.
+   */
+  limitFilled(coin: Asset, side: "long" | "short", limit: number): boolean;
   /** Fill an order to open `side` on `coin` for up to `stake` sats. */
   open(coin: Asset, side: "long" | "short", stake: number): OpenFill;
   /** Fill the order that closes a position of `stake` sats and `qty` coins. */
@@ -46,6 +53,11 @@ export type Executor = {
 export function idealExecutor(priceOf: (coin: Asset) => number): Executor {
   return {
     feeRate: FEE_RATE,
+    makerFeeRate: MAKER_FEE_RATE,
+    limitFilled: (coin, side, limit) => {
+      const px = priceOf(coin);
+      return px > 0 && (side === "long" ? px <= limit : px >= limit);
+    },
     open: (coin, _side, stake) => {
       const px = priceOf(coin);
       return px > 0 && stake > 0 ? { ok: true, price: px, mid: px, stake, qty: 0, cost: 0 } : { ok: false, reason: "no price" };
@@ -86,6 +98,14 @@ export function marketExecutor(tape: Pick<Tape, "assets" | "btcUsd" | "coins">, 
   const usdPerSat = tape.btcUsd / SATS_PER_BTC;
   return {
     feeRate: FEE_RATE,
+    makerFeeRate: MAKER_FEE_RATE,
+    // A resting buy at `limit` fills once the best offer has come down to it (a sell, once the best bid is up to it);
+    // without a live book, once the price has.
+    limitFilled(coin, side, limit) {
+      const q = tape.assets[coin];
+      if (!q || !(q.usd > 0)) return false;
+      return side === "long" ? (q.ask ?? q.usd) <= limit : (q.bid ?? q.usd) >= limit;
+    },
     open(coin, side, stake) {
       const q = tape.assets[coin];
       if (!q || !(q.usd > 0)) return { ok: false, reason: "rejected: no price" };

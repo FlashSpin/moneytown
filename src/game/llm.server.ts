@@ -27,6 +27,7 @@ import {
   cleanStrategy,
   coinsLabel,
   genesOf,
+  parishDefaults,
   FEE_RATE,
   STRATEGY_INFO,
   STRATEGY_KINDS,
@@ -129,9 +130,11 @@ const SIZING = `Sizing is automatic and learned: every trade is sized by the Kel
   MAX_RISK * 100,
 )}% of the purse at its stop-loss; a losing approach shrinks to tiny stakes until it proves itself. "size" is only the most the villager is willing to stake.`;
 
-const MENU = STRATEGY_KINDS.map(
-  (k) => `- ${k}: ${STRATEGY_INFO[k].about} (typical take-profit ${STRATEGY_INFO[k].tp}%, stop-loss ${STRATEGY_INFO[k].sl}%)`,
-).join("\n");
+const MENU = `Every strategy reads HOURLY bars (5- and 15-minute strategies lost to trading costs in every test) and, by default, trades only with Bitcoin's trend: buying while Bitcoin is above its 7-day average, shorting only below it — in a falling market, cash is a position. Take-profits rest on the book as limit orders (cheaper fills).
+${STRATEGY_KINDS.map((k) => {
+  const d = parishDefaults(k);
+  return `- ${k}: ${STRATEGY_INFO[k].about} (on hourly bars: take-profit about ${d.tp}%, stop-loss about ${d.sl}%)`;
+}).join("\n")}`;
 
 /**
  * The guild book for the councils: the lab's strategies that held up on data
@@ -139,7 +142,7 @@ const MENU = STRATEGY_KINDS.map(
  * genes and targets.
  */
 function bookBlock(book: PoolEntry[] | undefined): string {
-  const open = (book ?? []).filter((e) => !e.retired && (e.proven || (e.val.ret > 0 && e.test.ret > 0))).slice(0, 8);
+  const open = (book ?? []).filter((e) => !e.retired && e.genes.bar >= 12 && (e.proven || (e.val.ret > 0 && e.test.ret > 0))).slice(0, 8);
   if (!open.length) return "";
   const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
   const rows = open.map((e) => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { candleGrid, type Candle } from "./backtest.ts";
-import { cleanEntry, defaultGenome, evolveNiche, fix, isProven, MAX_WARMUP, mergePool, mutate, pickForSpawn, randomGenome, recordLive, rng, trainNewcomer, type PoolEntry, type Score } from "./lab.ts";
+import { cleanEntry, defaultGenome, evolveNiche, fix, isProven, MAX_WARMUP, mergePool, mutate, pickForSpawn, randomGenome, needsRetraining, recordLive, rng, trainNewcomer, type PoolEntry, type Score } from "./lab.ts";
 import { BARS, cleanStrategy, DEFAULT_GENES, STRATEGY_KINDS, warmupOf } from "./strategies.ts";
 
 /** Candles for `n` coins: a random walk, with `drift` adding trends that persist. */
@@ -36,7 +36,7 @@ const entry = (over: Partial<PoolEntry> = {}): PoolEntry => ({
 
 describe("genomes", () => {
   it("the usual genes on 5-minute bars trade exactly as the strategies always have", () => {
-    for (const kind of STRATEGY_KINDS) assert.deepEqual(defaultGenome(kind, 1).genes, DEFAULT_GENES[kind], kind);
+    for (const kind of STRATEGY_KINDS) if (DEFAULT_GENES[kind].bar === 1) assert.deepEqual(defaultGenome(kind, 1).genes, { ...DEFAULT_GENES[kind], regime: 0, entry: 0 }, kind);
   });
 
   it("random and mutated genomes stay in range and fit the history the parish keeps", () => {
@@ -151,5 +151,25 @@ describe("training newcomers", () => {
     const chosen = cleanStrategy({ genome: "bre-y" }, { kind: "scalp", coins: [], sizePct: 0.3, takeProfitPct: 1, stopLossPct: 1, shorts: true }, ["BTC"], book);
     assert.equal(chosen.kind, "breakout");
     assert.equal(chosen.genome?.book, "bre-y");
+  });
+});
+
+describe("retraining", () => {
+  it("sends losing villagers and those on retired strategies back to the guild, judged from their last retraining", () => {
+    const book = [entry({ id: "bre-y" }), entry({ id: "bre-old", retired: "lost live" })];
+    const plain = { kind: "scalp" as const, coins: [], sizePct: 0.3, takeProfitPct: 2, stopLossPct: 1, shorts: true };
+    assert.match(needsRetraining({ strategy: plain, record: { wins: 3, losses: 8, pnl: -500 } }, book)!, /lost money over 11 trades/);
+    assert.equal(needsRetraining({ strategy: plain, record: { wins: 3, losses: 4, pnl: -500 } }, book), null, "too few trades to judge");
+    assert.equal(needsRetraining({ strategy: { ...plain, since: { wins: 3, losses: 8, pnl: -500 } }, record: { wins: 5, losses: 9, pnl: -300 } }, book), null, "since retraining it has made money");
+    const retired = trainNewcomer(book, rng(1), plain, "bre-y")!;
+    assert.match(needsRetraining({ strategy: { ...retired, genome: { ...retired.genome!, book: "bre-old" } } }, book)!, /retired/);
+  });
+
+  it("spreads newcomers across kinds rather than crowding one", () => {
+    const book = [entry({ id: "bre-y", score: 9 }), { ...entry({ id: "tre-q", score: 8 }), ...defaultGenome("trend", 12), id: "tre-q", score: 8 }];
+    const r = rng(3);
+    let trend = 0;
+    for (let k = 0; k < 200; k++) if (pickForSpawn(book, r, undefined, { breakout: 6 })?.kind === "trend") trend++;
+    assert.ok(trend > 120, `with six breakout traders already, trend should be picked mostly (${trend}/200)`);
   });
 });

@@ -24,8 +24,8 @@ function LabPage() {
         </Link>
         <h1>Strategy lab</h1>
         <p className="bt-lede">
-          Every day the lab breeds thousands of variants of each strategy — on 5-minute, 15-minute, hourly and 4-hour bars — and backtests them on
-          months of real prices with every cost included. The best are adjusted a little and tried again, generation after generation, and each run
+          Every day the lab breeds thousands of variants of each strategy — on hourly and 4-hour bars, where trading costs matter least — and
+          backtests them on three years of real prices with every cost included. The best are adjusted a little and tried again, generation after generation, and each run
           starts from the previous run&apos;s best. What holds up on data it never saw goes into the guild book, and every new villager is trained in
           a slightly adjusted copy of the book&apos;s best — so the newer the villager, the more it has been tested.
         </p>
@@ -157,7 +157,8 @@ function Runs({ book }: { book: LabBook }) {
         <>
           <p className="bt-note">
             Latest: {when(new Date(latest.createdAt).getTime())} — {latest.summary.niches?.reduce((n, x) => n + x.evaluated, 0) ?? 0} strategies
-            backtested on {latest.summary.data?.coins.length ?? 0} coins ({latest.summary.data?.days5 ?? "?"} days of 5-minute and{" "}
+            backtested on {latest.summary.data?.coins.length ?? 0} coins (
+            {latest.summary.data?.days5 ? `${latest.summary.data.days5} days of 5-minute and ` : ""}
             {latest.summary.data?.daysH ?? "?"} days of hourly candles); {latest.found} kept, {latest.proven} proven.
           </p>
           {latest.summary.niches && latest.summary.niches.length > 0 && (

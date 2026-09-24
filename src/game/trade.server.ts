@@ -11,9 +11,10 @@
 import { loadTape } from "@/lib/tape.server";
 import { SHOUT_LIFE } from "./constants";
 import { marketCoins, priceOf, scanCoins } from "./dawn";
-import { appendHourly, appendTick, hoursOf, priceFresh, seedHourly, seriesForBar, tradingSeries, validatePrices, type Ticks } from "./indicators";
+import { appendHourly, appendTick, hoursOf, regimeOf, priceFresh, seedHourly, seriesForBar, tradingSeries, validatePrices, type Ticks } from "./indicators";
 import { recordLive } from "./lab";
 import { haltReason, riskBook, type Gate } from "./limits";
+import { deskProbation, PROBATION_EDGE } from "./risk";
 import { standAt } from "./shops";
 import { marketExecutor } from "./execution";
 import { addLesson } from "./knowledge";
@@ -22,7 +23,7 @@ import { checkMilestones } from "./progress";
 import { RANK_INFO, rankChange, rankOf } from "./ranks";
 import { Journal, withPostings } from "./ledger";
 import { DESK_DEFAULT_GAP, tradingDesk, type CouncilSoul, type Desk } from "./llm.server";
-import { defaultStrategy, deskStep, genesOf, tradeStep, type Strategy, type TradeEvent, type Trader } from "./strategies";
+import { defaultStrategy, deskStep, slowed, tradeStep, type Strategy, type TradeEvent, type Trader } from "./strategies";
 import { wanderPoint } from "./town";
 import { temperOf } from "./trading";
 import type { GameState, SpeechLine, Subject, Tape } from "./types";
@@ -49,8 +50,9 @@ export function coinsNeeded(state: GameState): string[] {
   return [...out];
 }
 
+/** A villager's strategy; one still on fast bars without lab genes moves onto the parish's slower defaults. */
 export function strategyOf(s: Subject, tape: Tape): Strategy {
-  return s.strategy ?? defaultStrategy(s.id, s.temper ?? temperOf(s.id), marketCoins(tape));
+  return s.strategy ? slowed(s.strategy) : defaultStrategy(s.id, s.temper ?? temperOf(s.id), marketCoins(tape));
 }
 
 /** How the AI sees a villager: purse, strategy, trade, record and what it has learned. */
@@ -111,6 +113,8 @@ export function tradeParish(
   const paused = new Set(state.decree?.paused ?? []);
   const notes: { kind: "subject" | "tape"; text: string }[] = [];
   const stake = stakeSats(tape);
+  const regime = regimeOf(ticks, now);
+  const probation = deskProbation(state.subjects.filter(isLiving).map((s) => s.knowledge?.approaches.own)).on;
   const rng = mulberry32(state.seed + Math.floor(now / 60_000));
   const gbp = (sats: number) => formatGbp(satsToGbp(sats, tapeGbp(tape)));
   const events: TradeEvent[] = [];
@@ -133,6 +137,9 @@ export function tradeParish(
       trades: s.trades,
       knowledge: lesson ? addLesson(s.knowledge, lesson) : s.knowledge,
       riskCap: RANK_INFO[rankOf(s.record)].riskCap,
+      regime,
+      pending: s.pending,
+      ...(probation ? { minEdge: PROBATION_EDGE } : {}),
     };
     const px = (coin: string) => priceOf(tape, coin);
     const gate = book.gateFor(s);
@@ -175,6 +182,8 @@ export function tradeParish(
       position: trader.position,
       cooldownUntil: trader.cooldownUntil,
       cooldownCoin: trader.cooldownCoin,
+      // An own call at the desk replaces any resting order.
+      pending: own?.events.length ? undefined : trader.pending,
       record: trader.record,
       trades: trader.trades,
       knowledge: trader.knowledge,
@@ -284,6 +293,7 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
   }
   const answer = due ? memo.desk : undefined;
+  const onProbation = deskProbation(prev.subjects.filter(isLiving).map((s) => s.knowledge?.approaches.own));
   const desk = answer && !("error" in answer) ? answer : null;
   const { subjects, events, speech, skipped, risk, notes, rejects } = tradeParish({ ...prev, tape, ticks }, tape, ticks, now, desk, process.env.TRADING_HALT);
   const journal = new Journal({ at: now, day: prev.day }, "trade");
@@ -320,7 +330,9 @@ export async function runTradeTick(prev: GameState, memo: { desk?: Desk | { erro
     desk: due
       ? {
           at: now,
-          nextAt: now + (desk?.nextMin ?? DESK_DEFAULT_GAP) * 60_000,
+          // On probation the desk looks at most every two hours.
+          nextAt: now + Math.max(desk?.nextMin ?? DESK_DEFAULT_GAP, onProbation.on ? 120 : 0) * 60_000,
+          ...(onProbation.on ? { probation: `own calls have lost ${onProbation.pnl} sats over ${onProbation.trades} trades` } : {}),
           say: desk?.say ?? "",
           orders: desk?.orders.size ?? 0,
           skipped,
@@ -348,16 +360,13 @@ const HOURS_WANTED = 230;
 /**
  * Strategies on hourly and 4-hour bars need days of history the ticks
  * haven't seen yet: fill it from Kraken's hourly candles, a few coins a
- * tick (each tried at most once an hour), only while something trades on
- * longer bars or the guild book holds such a strategy.
+ * tick (each tried at most once an hour), Bitcoin first.
  */
 async function seedHourlyBars(prev: GameState, ticks: Ticks, coins: string[], now: number): Promise<void> {
-  const wanted =
-    prev.subjects.some((s) => isLiving(s) && s.strategy && genesOf(s.strategy).bar >= 12) ||
-    (prev.lab?.pool ?? []).some((e) => !e.retired && e.genes.bar >= 12);
-  if (!wanted || !ticks.h) return;
+  if (!ticks.h) return;
   const tried = { ...(ticks.hSeeded ?? {}) };
-  const short = coins.filter((c) => hoursOf(ticks, c) < HOURS_WANTED && now - (tried[c] ?? 0) > 3_600_000).slice(0, 3);
+  // Bitcoin first: its trend decides the market regime.
+  const short = ["BTC", ...coins.filter((c) => c !== "BTC")].filter((c) => hoursOf(ticks, c) < HOURS_WANTED && now - (tried[c] ?? 0) > 3_600_000).slice(0, 3);
   if (!short.length) return;
   for (const c of short) tried[c] = now;
   ticks.hSeeded = Object.fromEntries(Object.entries(tried).filter(([c]) => coins.includes(c)));

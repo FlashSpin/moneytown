@@ -28,11 +28,12 @@ import { runBacktest, type Grid, type Metrics } from "./backtest.ts";
 import {
   BAR_LABEL,
   BARS,
-  DEFAULT_GENES,
   LONG_ONLY,
   STRATEGY_INFO,
   STRATEGY_KINDS,
+  defaultsFor,
   fromBook,
+  thrScale,
   warmupOf,
   type Bar,
   type Genes,
@@ -99,10 +100,8 @@ const RANGES: Record<StrategyKind, Range> = {
   trend: { look: [8, 200], fast: [2, 40], thr: [0, 0] },
   conservative: { look: [8, 150], fast: [2, 30], thr: [0.1, 3] },
   volatility: { look: [8, 120], fast: [3, 24], thr: [1.2, 4] },
+  rotation: { look: [6, 200], fast: [1, 6], thr: [0, 10] },
 };
-/** Percent thresholds grow with the bar: a 4-hour bar moves more than a 5-minute one. */
-const PCT_THR: ReadonlySet<StrategyKind> = new Set(["scalp", "momentum", "conservative"]);
-const thrScale = (kind: StrategyKind, bar: Bar) => (PCT_THR.has(kind) ? Math.sqrt(bar) : 1);
 
 /**
  * The most bars of history a genome may need, per bar size — what the live
@@ -131,6 +130,8 @@ export function fix(g: Genome): Genome {
   genes.filter = genes.filter > 0 ? Math.round(Math.max(genes.filter, 10)) : 0;
   genes.trail = genes.trail > 0 ? round(clamp(genes.trail, 0.3, 10)) : 0;
   genes.hold = Math.round(clamp(genes.hold, 2, MAX_HOLD[bar]));
+  genes.regime = genes.regime ? 1 : 0;
+  genes.entry = genes.entry ? 1 : 0;
   // Whatever it needs must fit the history the live parish keeps.
   const cap = MAX_WARMUP[bar];
   if (genes.filter > cap) genes.filter = cap;
@@ -170,10 +171,8 @@ export function newId(r: () => number, kind: StrategyKind): string {
 
 /** A genome with the kind's usual genes, on `bar`-sized bars. */
 export function defaultGenome(kind: StrategyKind, bar: Bar = 1): Genome {
-  const info = STRATEGY_INFO[kind];
-  const d = DEFAULT_GENES[kind];
-  const genes = bar === 1 ? { ...d } : { ...d, bar, hold: Math.max(2, Math.round(d.hold / bar)), thr: d.thr * thrScale(kind, bar) };
-  return fix({ id: `${kind.slice(0, 3)}-default-${bar}`, kind, genes, tp: info.tp * (bar === 1 ? 1 : Math.sqrt(bar) / 1.5), sl: info.sl * (bar === 1 ? 1 : Math.sqrt(bar) / 1.5), shorts: !LONG_ONLY.has(kind), gen: 0 });
+  const d = defaultsFor(kind, bar);
+  return fix({ id: `${kind.slice(0, 3)}-default-${bar}`, kind, genes: d.genes, tp: d.tp, sl: d.sl, shorts: !LONG_ONLY.has(kind), gen: 0 });
 }
 
 /** A random genome of `kind` on `bar`-sized bars. */
@@ -189,6 +188,8 @@ export function randomGenome(r: () => number, kind: StrategyKind, bar: Bar): Gen
     filter: r() < 0.5 ? 0 : Math.round(logUni(r, 20, MAX_WARMUP[bar])),
     trail: r() < 0.5 ? 0 : logUni(r, 0.5, 8),
     hold: Math.round(logUni(r, 3, MAX_HOLD[bar])),
+    regime: r() < 0.5 ? 1 : 0,
+    entry: r() < 0.5 ? 1 : 0,
   };
   const sl = logUni(r, SL[0] * Math.sqrt(bar) ** 0.5, Math.min(SL[1], 2 * Math.sqrt(bar)));
   return fix({ id: newId(r, kind), kind, genes, sl, tp: sl * logUni(r, 0.7, 5), shorts: r() < 0.6, gen: 0 });
@@ -201,7 +202,7 @@ export function mutate(r: () => number, g: Genome, strength = 0.15): Genome {
   const step = (x: number) => Math.max(1, Math.round(nudge(x) + (r() < 0.5 ? -1 : 1) * (r() < 0.3 ? 1 : 0)));
   const changes = 1 + (r() < 0.4 ? 1 : 0);
   for (let k = 0; k < changes; k++) {
-    const pick = Math.floor(r() * 9);
+    const pick = Math.floor(r() * 11);
     if (pick === 0) next.genes.look = step(next.genes.look);
     else if (pick === 1) next.genes.fast = step(next.genes.fast);
     else if (pick === 2) next.genes.thr = next.genes.thr > 0 ? nudge(next.genes.thr) : RANGES[g.kind].thr[1] > 0 ? RANGES[g.kind].thr[0] * thrScale(g.kind, g.genes.bar) : 0;
@@ -210,7 +211,9 @@ export function mutate(r: () => number, g: Genome, strength = 0.15): Genome {
     else if (pick === 5) next.genes.hold = step(next.genes.hold);
     else if (pick === 6) next.tp = nudge(next.tp);
     else if (pick === 7) next.sl = nudge(next.sl);
-    else next.shorts = r() < 0.2 ? !next.shorts : next.shorts;
+    else if (pick === 8) next.shorts = r() < 0.2 ? !next.shorts : next.shorts;
+    else if (pick === 9) next.genes.regime = r() < 0.3 ? 1 - (next.genes.regime ?? 0) : next.genes.regime;
+    else next.genes.entry = r() < 0.3 ? 1 - (next.genes.entry ?? 0) : next.genes.entry;
   }
   return fix(next);
 }
@@ -226,6 +229,8 @@ export function crossover(r: () => number, a: Genome, b: Genome): Genome {
     filter: pick(a.genes.filter, b.genes.filter),
     trail: pick(a.genes.trail, b.genes.trail),
     hold: pick(a.genes.hold, b.genes.hold),
+    regime: pick(a.genes.regime ?? 0, b.genes.regime ?? 0),
+    entry: pick(a.genes.entry ?? 0, b.genes.entry ?? 0),
   };
   return fix({ id: newId(r, a.kind), kind: a.kind, genes, tp: pick(a.tp, b.tp), sl: pick(a.sl, b.sl), shorts: pick(a.shorts, b.shorts), parent: a.id, gen: Math.max(a.gen, b.gen) + 1 });
 }
@@ -251,9 +256,12 @@ export function strategyOf(g: Genome, sizePct = 0.3): Strategy {
 export function describe(g: Genome): string {
   const bits = [`${STRATEGY_INFO[g.kind].label}`, BAR_LABEL[g.genes.bar] + " bars", `look ${g.genes.look}`];
   if (g.kind === "trend" || g.kind === "conservative" || g.kind === "volatility") bits.push(`fast ${g.genes.fast}`);
+  if (g.kind === "rotation") bits.push(`top ${g.genes.fast}`);
   if (g.genes.thr) bits.push(`trigger ${g.genes.thr}`);
   if (g.genes.filter) bits.push(`trend filter ${g.genes.filter}`);
   if (g.genes.trail) bits.push(`trailing ${g.genes.trail}%`);
+  if (g.genes.regime) bits.push("with Bitcoin's trend");
+  if (g.genes.entry) bits.push("limit entries");
   bits.push(`TP ${g.tp}% / SL ${g.sl}%`, `hold ≤ ${g.genes.hold} bars`, g.shorts ? "long & short" : "long only");
   return bits.join(" · ");
 }
@@ -360,7 +368,13 @@ export function rankScore(e: Pick<PoolEntry, "val" | "test" | "proven" | "live">
 
 export type Niche = { kind: StrategyKind; bar: Bar };
 export const nicheKey = (n: Niche) => `${n.kind}/${n.bar}`;
-export const NICHES: Niche[] = BARS.flatMap((bar) => STRATEGY_KINDS.map((kind) => ({ kind, bar })));
+/**
+ * The bar sizes the lab breeds for. Every run so far showed 5- and 15-minute
+ * strategies losing to costs whatever their settings, so the parish trades
+ * hourly and 4-hour bars.
+ */
+export const SLOW_BARS: Bar[] = [12, 48];
+export const NICHES: Niche[] = SLOW_BARS.flatMap((bar) => STRATEGY_KINDS.map((kind) => ({ kind, bar })));
 
 export type EvolveOpts = EvalOpts & {
   seed: number;
@@ -512,13 +526,15 @@ export function recordLive(book: PoolEntry[], events: Pick<TradeEvent, "action" 
  * `kind` if asked — then adjusted a little, so each newcomer is a new
  * variant of what has worked best so far.
  */
-export function pickForSpawn(book: PoolEntry[], r: () => number, kind?: StrategyKind): Genome | null {
-  const open = book.filter((e) => !e.retired && (!kind || e.kind === kind));
+export function pickForSpawn(book: PoolEntry[], r: () => number, kind?: StrategyKind, crowd: Partial<Record<StrategyKind, number>> = {}): Genome | null {
+  // Only slow-bar strategies are handed out: every test showed fast bars losing to costs.
+  const open = book.filter((e) => !e.retired && SLOW_BARS.includes(e.genes.bar) && (!kind || e.kind === kind));
   const proven = open.filter((e) => e.proven);
   const from = (proven.length ? proven : open.filter((e) => e.val.ret > 0 && e.test.ret > 0)).sort((a, b) => b.score - a.score).slice(0, 8);
   if (!from.length) return null;
-  // Rank-weighted: the best is twice as likely as the fourth.
-  const w = from.map((_, i) => 1 / (1 + i / 3));
+  // Rank-weighted (the best twice as likely as the fourth), and less likely the more villagers already
+  // trade that kind: several different strategies together lose less at once than one crowded one.
+  const w = from.map((e, i) => 1 / (1 + i / 3) / (1 + (crowd[e.kind] ?? 0) / 2));
   let x = r() * w.reduce((a, b) => a + b, 0);
   let k = 0;
   while (k < from.length - 1 && (x -= w[k]!) > 0) k++;
@@ -533,17 +549,53 @@ export function pickForSpawn(book: PoolEntry[], r: () => number, kind?: Strategy
  * the book has nothing worth training in (the newcomer keeps its
  * temperament's strategy).
  */
-export function trainNewcomer(book: PoolEntry[], r: () => number, base: Pick<Strategy, "coins" | "sizePct" | "note">, want?: string | null): Strategy | null {
+export function trainNewcomer(
+  book: PoolEntry[],
+  r: () => number,
+  base: Pick<Strategy, "coins" | "sizePct" | "note">,
+  want?: string | null,
+  crowd: Partial<Record<StrategyKind, number>> = {},
+): Strategy | null {
   const w = (want ?? "").trim().toLowerCase();
   const named = w ? book.find((e) => e.id.toLowerCase() === w && !e.retired) : undefined;
   const kind = STRATEGY_KINDS.find((k) => k === w);
   const child = named
     ? mutate(r, { id: named.id, kind: named.kind, genes: named.genes, tp: named.tp, sl: named.sl, shorts: named.shorts, gen: named.gen, parent: named.parent }, 0.06)
-    : pickForSpawn(book, r, kind);
+    : pickForSpawn(book, r, kind, crowd);
   if (!child) return null;
   const from = book.find((e) => e.id === child.parent);
   if (!from) return null;
   return fromBook({ ...from, genes: child.genes, tp: child.tp, sl: child.sl, shorts: child.shorts }, base, { id: child.id, parent: from.id, gen: child.gen });
+}
+
+/** Closed trades before a villager's record can send it back to the guild for retraining. */
+export const RETRAIN_SAMPLE = 10;
+
+/**
+ * Villagers the guild retrains at dawn, with the reason: those on a book
+ * strategy the lab has since retired, and those losing money over at least
+ * RETRAIN_SAMPLE trades on a strategy that isn't a proven book one.
+ */
+export function needsRetraining(
+  s: { strategy?: Strategy; record?: { wins: number; losses: number; pnl: number } },
+  book: PoolEntry[],
+): string | null {
+  const g = s.strategy?.genome;
+  const entry = g ? book.find((e) => e.id === (g.book ?? g.id)) : undefined;
+  if (entry?.retired) return `its guild strategy ${entry.id} was retired`;
+  if (g && s.strategy?.genes && !SLOW_BARS.includes(s.strategy.genes.bar)) return "its guild strategy trades fast bars, which lose to costs";
+  const all = s.record;
+  const from = s.strategy?.since ?? { wins: 0, losses: 0, pnl: 0 };
+  const r = all ? { wins: all.wins - from.wins, losses: all.losses - from.losses, pnl: all.pnl - from.pnl } : null;
+  if (r && r.wins + r.losses >= RETRAIN_SAMPLE && r.pnl < 0 && !entry?.proven) return `lost money over ${r.wins + r.losses} trades`;
+  return null;
+}
+
+/** How many living villagers trade each kind of strategy. */
+export function crowdOf(strategies: (Pick<Strategy, "kind"> | undefined)[]): Partial<Record<StrategyKind, number>> {
+  const out: Partial<Record<StrategyKind, number>> = {};
+  for (const s of strategies) if (s) out[s.kind] = (out[s.kind] ?? 0) + 1;
+  return out;
 }
 
 /** Genomes in the book for one niche (to seed the next run). */
@@ -568,7 +620,7 @@ export function cleanEntry(raw: unknown): PoolEntry | null {
   const g = fix({
     id: String(o.id ?? "").replace(/[^a-z0-9-]/gi, "").slice(0, 32) || "genome",
     kind,
-    genes: { bar, look: num(gr.look, 10), fast: num(gr.fast, 3), thr: num(gr.thr), filter: num(gr.filter), trail: num(gr.trail), hold: num(gr.hold, 24) },
+    genes: { bar, look: num(gr.look, 10), fast: num(gr.fast, 3), thr: num(gr.thr), filter: num(gr.filter), trail: num(gr.trail), hold: num(gr.hold, 24), regime: num(gr.regime), entry: num(gr.entry) },
     tp: num(o.tp, 2),
     sl: num(o.sl, 1),
     shorts: o.shorts === true,
